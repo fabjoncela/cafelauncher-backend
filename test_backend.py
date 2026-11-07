@@ -5,6 +5,8 @@ import base64
 import hashlib
 import os
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -188,6 +190,43 @@ class GitHubMirrorTests(unittest.TestCase):
         self.assertEqual(requests[0][0:2], ("POST", "/git/blobs"))
         self.assertEqual(expected_blob, github_mirror._git_blob_sha(content))
 
+    def test_publisher_reloads_new_branch_head_after_ref_conflict(self) -> None:
+        client = github_mirror.GitHubClient("example/data", "t" * 40)
+        branch_heads = iter(
+            [
+                ("old-parent", "old-tree", {}),
+                ("new-parent", "new-tree", {}),
+            ]
+        )
+        client.current_tree = lambda _branch: next(branch_heads)
+        requests = []
+        content = b'{"generation":4}'
+        expected_blob = github_mirror._git_blob_sha(content)
+
+        def fake_request(method, path, payload=None):
+            requests.append((method, path, payload))
+            if path == "/git/blobs":
+                return {"sha": github_mirror._git_blob_sha(base64.b64decode(payload["content"]))}
+            if path == "/git/trees":
+                return {"sha": f"tree-{len([r for r in requests if r[1] == '/git/trees'])}"}
+            if path == "/git/commits":
+                return {"sha": f"commit-{len([r for r in requests if r[1] == '/git/commits'])}"}
+            if path == "/git/refs/heads/main":
+                if payload["sha"] == "commit-1":
+                    raise github_mirror.GitHubHTTPError(422, "simulated non-fast-forward update")
+                self.assertEqual(payload, {"sha": "commit-2", "force": False})
+                return {}
+            self.fail(f"Unexpected GitHub API request: {method} {path}")
+
+        client.request = fake_request
+        result = client.publish_snapshot("main", 4, {"mirror-manifest.json": content})
+        self.assertEqual(result, "commit-2")
+        ref_updates = [request for request in requests if request[1] == "/git/refs/heads/main"]
+        self.assertEqual(len(ref_updates), 2)
+        self.assertEqual(ref_updates[0][2]["sha"], "commit-1")
+        self.assertEqual(ref_updates[1][2]["sha"], "commit-2")
+        self.assertEqual(expected_blob, github_mirror._git_blob_sha(content))
+
     def test_publisher_requires_initialized_repository_branch(self) -> None:
         client = github_mirror.GitHubClient("example/data", "t" * 40)
         client.current_tree = lambda _branch: (None, None, {})
@@ -324,6 +363,67 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(status, 409)
         self.assertEqual(json.loads(body)["currentRevision"], 1)
 
+    def test_identical_sync_does_not_create_revision_or_mirror_generation(self) -> None:
+        sync_token = os.environ["CAFELAUNCHER_SYNC_TOKEN"]
+        status, _, first_body = self.put_bundle(0, token=sync_token)
+        self.assertEqual(status, 200)
+        first = json.loads(first_body)
+        with server._connect() as connection:
+            generation_before = connection.execute(
+                "SELECT generation FROM github_mirror_state WHERE singleton = 1"
+            ).fetchone()[0]
+
+        status, _, second_body = self.put_bundle(1, token=sync_token)
+        self.assertEqual(status, 200)
+        second = json.loads(second_body)
+        self.assertTrue(second["unchanged"])
+        self.assertEqual(second["revision"], first["revision"])
+        self.assertEqual(second["createdUtc"], first["createdUtc"])
+        with server._connect() as connection:
+            revision_count = connection.execute(
+                "SELECT COUNT(*) FROM profile_revisions WHERE profile_name = 'FabMode'"
+            ).fetchone()[0]
+            generation_after = connection.execute(
+                "SELECT generation FROM github_mirror_state WHERE singleton = 1"
+            ).fetchone()[0]
+        self.assertEqual(revision_count, 1)
+        self.assertEqual(generation_after, generation_before)
+
+    def test_graphics_history_omits_profile_and_cfg_only_revisions(self) -> None:
+        sync_token = os.environ["CAFELAUNCHER_SYNC_TOKEN"]
+        status, _, _ = self.put_bundle(0, token=sync_token)
+        self.assertEqual(status, 200)
+
+        profile_only = profile_payload()
+        profile_only["PointerSpeed"] = 11
+        status, _, _ = self.put_bundle(1, token=sync_token, profile=profile_only)
+        self.assertEqual(status, 200)
+
+        status, _, _ = self.put_bundle(2, token=sync_token, profile=profile_only, cfg='sensitivity "1.3"\n')
+        self.assertEqual(status, 200)
+
+        graphics_changed = graphics_payload()
+        graphics_changed["Settings"]["MSAASamples"] = 4
+        status, _, _ = self.put_bundle(3, token=sync_token, profile=profile_only, graphics=graphics_changed, cfg='sensitivity "1.3"\n')
+        self.assertEqual(status, 200)
+
+        status, _, body = self.request("/v1/graphics/FabMode/history?limit=3")
+        self.assertEqual(status, 200)
+        history = json.loads(body)["revisions"]
+        self.assertEqual([entry["revision"] for entry in history], [4, 1])
+
+        with patch.dict(
+            os.environ,
+            {
+                "CAFELAUNCHER_GITHUB_REPO": "example/cafelauncher-data",
+                "CAFELAUNCHER_GITHUB_BRANCH": "main",
+                "CAFELAUNCHER_GITHUB_TOKEN": "github-token-" + "g" * 40,
+            },
+        ):
+            _, files = github_mirror.build_snapshot()
+        mirrored_history = json.loads(files["history/graphics/FabMode.json"])["revisions"]
+        self.assertEqual([entry["revision"] for entry in mirrored_history], [4, 1])
+
     def test_api_rejects_invalid_profile_graphics_and_cfg(self) -> None:
         sync_token = os.environ["CAFELAUNCHER_SYNC_TOKEN"]
         bad_profile = profile_payload()
@@ -345,6 +445,14 @@ class ApiTests(unittest.TestCase):
             method="PUT",
             body=json.dumps({"expectedRevision": 0, "profile": {}, "graphics": {}, "cfg": "", "unexpected": True}).encode(),
             token=sync_token,
+        )
+        self.assertEqual(status, 400)
+        status, _, _ = self.request(
+            "/v1/admin/releases/v1/launcher",
+            method="PUT",
+            body=b"not a CafeLauncher release version",
+            token=os.environ["CAFELAUNCHER_PUBLISH_TOKEN"],
+            content_type="application/octet-stream",
         )
         self.assertEqual(status, 400)
 
@@ -372,6 +480,46 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body, launcher)
 
+    def test_latest_release_uses_launcher_version_not_upload_time(self) -> None:
+        token = os.environ["CAFELAUNCHER_PUBLISH_TOKEN"]
+
+        def publish(version: str) -> None:
+            for kind, body in (("launcher", f"launcher {version}".encode()), ("graphics-module", f"module {version}".encode())):
+                status, _, _ = self.request(
+                    f"/v1/admin/releases/{version}/{kind}",
+                    method="PUT",
+                    body=body,
+                    token=token,
+                    content_type="application/octet-stream",
+                )
+                self.assertEqual(status, 201)
+            status, _, _ = self.request(
+                f"/v1/admin/releases/{version}/manifest",
+                method="PUT",
+                body=b"{}",
+                token=token,
+            )
+            self.assertEqual(status, 201)
+
+        publish("2026.11.07.9")
+        publish("2026.11.07.2")
+        status, _, body = self.request("/v1/releases/latest")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["version"], "2026.11.07.9")
+
+        with patch.dict(
+            os.environ,
+            {
+                "CAFELAUNCHER_GITHUB_REPO": "example/cafelauncher-data",
+                "CAFELAUNCHER_GITHUB_BRANCH": "main",
+                "CAFELAUNCHER_GITHUB_TOKEN": "github-token-" + "g" * 40,
+            },
+        ):
+            _, files = github_mirror.build_snapshot()
+        mirror_manifest = json.loads(files["mirror-manifest.json"])
+        self.assertEqual(mirror_manifest["releases"]["latestVersion"], "2026.11.07.9")
+        self.assertEqual(json.loads(files["releases/latest.json"])["version"], "2026.11.07.9")
+
     def test_optional_logihub_mirror_is_token_published_and_immutable(self) -> None:
         asset = b"logihub helper sample binary"
         path = "/v1/admin/tools/logihub/v0.1.0-c54d.1"
@@ -391,6 +539,38 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(body, asset)
         status, _, _ = self.request(path, method="PUT", body=b"replacement", token=token, content_type="application/octet-stream")
         self.assertEqual(status, 409)
+
+        asset_path = Path(self.temp.name) / "tools" / "logihub" / "v0.1.0-c54d.1" / "asset.bin"
+        asset_path.write_bytes(b"tampered helper")
+        status, _, body = self.request(latest["asset"]["url"])
+        self.assertEqual(status, 503)
+        self.assertEqual(json.loads(body)["error"], "tool_asset_integrity")
+
+    def test_release_download_rejects_asset_changed_after_publish(self) -> None:
+        token = os.environ["CAFELAUNCHER_PUBLISH_TOKEN"]
+        version = "2026.11.07.3"
+        for kind, body in (("launcher", b"verified launcher"), ("graphics-module", b"verified module")):
+            status, _, _ = self.request(
+                f"/v1/admin/releases/{version}/{kind}",
+                method="PUT",
+                body=body,
+                token=token,
+                content_type="application/octet-stream",
+            )
+            self.assertEqual(status, 201)
+        status, _, _ = self.request(
+            f"/v1/admin/releases/{version}/manifest",
+            method="PUT",
+            body=b"{}",
+            token=token,
+        )
+        self.assertEqual(status, 201)
+
+        asset_path = Path(self.temp.name) / "releases" / version / "launcher.bin"
+        asset_path.write_bytes(b"tampered launcher")
+        status, _, body = self.request(f"/v1/releases/{version}/launcher")
+        self.assertEqual(status, 503)
+        self.assertEqual(json.loads(body)["error"], "release_asset_integrity")
 
     def test_publish_client_uploads_and_verifies_server_hashes(self) -> None:
         from argparse import Namespace
@@ -466,6 +646,10 @@ class ApiTests(unittest.TestCase):
             mirror_manifest = json.loads(files["mirror-manifest.json"])
             self.assertEqual(mirror_manifest["generation"], generation)
             self.assertEqual(mirror_manifest["profiles"]["FabMode"]["revision"], 1)
+            self.assertEqual(
+                [entry["revision"] for entry in json.loads(files["history/graphics/FabMode.json"])["revisions"]],
+                [1],
+            )
 
             with patch.object(github_mirror.GitHubClient, "publish_snapshot", side_effect=github_mirror.MirrorError("simulated GitHub outage")):
                 with self.assertRaises(github_mirror.MirrorError):
@@ -475,7 +659,31 @@ class ApiTests(unittest.TestCase):
             self.assertGreater(failed["generation"], failed["mirrored_generation"])
             self.assertIn("simulated GitHub outage", failed["last_error"])
 
-            with patch.object(github_mirror.GitHubClient, "publish_snapshot", return_value="a" * 40):
+            restarted_environment = os.environ.copy()
+            restarted_environment["CAFELAUNCHER_DATA_DIR"] = self.temp.name
+            status = subprocess.run(
+                [sys.executable, github_mirror.__file__, "--status"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=restarted_environment,
+            )
+            persisted = json.loads(status.stdout)
+            self.assertGreater(persisted["generation"], persisted["mirrored_generation"])
+            self.assertIn("simulated GitHub outage", persisted["last_error"])
+
+            status, _, _ = self.put_bundle(1, token=sync_token, cfg='sensitivity "1.3"\n')
+            self.assertEqual(status, 200)
+
+            def verify_restarted_snapshot(branch, new_generation, new_files):
+                self.assertEqual(branch, "main")
+                self.assertGreater(new_generation, persisted["generation"])
+                restarted_manifest = json.loads(new_files["mirror-manifest.json"])
+                self.assertEqual(restarted_manifest["profiles"]["FabMode"]["revision"], 2)
+                self.assertEqual(new_files["cfg/fab.cfg"], b'sensitivity "1.3"\n')
+                return "b" * 40
+
+            with patch.object(github_mirror.GitHubClient, "publish_snapshot", side_effect=verify_restarted_snapshot):
                 self.assertTrue(github_mirror.sync_once())
             with server._connect() as connection:
                 recovered = connection.execute("SELECT generation, mirrored_generation, last_error FROM github_mirror_state").fetchone()

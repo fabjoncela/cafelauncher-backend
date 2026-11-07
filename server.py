@@ -28,12 +28,17 @@ MAX_LAUNCHER_BYTES = 64 * 1024 * 1024
 MAX_MODULE_BYTES = 8 * 1024 * 1024
 MAX_TOOL_BYTES = 32 * 1024 * 1024
 PROFILE_NAME = re.compile(r"[A-Za-z0-9_-]{1,32}\Z")
-RELEASE_VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
+LAUNCHER_RELEASE_VERSION = re.compile(r"\d{4}\.\d{1,2}\.\d{1,2}\.\d+\Z")
+TOOL_VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 DB_LOCK = threading.RLock()
 
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+def _launcher_version_key(version: str) -> tuple[int, int, int, int]:
+    return tuple(int(part) for part in version.split("."))
 
 
 def _json_bytes(value: object) -> bytes:
@@ -311,6 +316,8 @@ class ApiHandler(BaseHTTPRequestHandler):
                 return
             query = parse_qs(parsed.query)
             try:
+                # The limit means older versions, like the launcher UI. Include
+                # the current graphics snapshot so an adapter can skip it.
                 limit = int(query.get("limit", ["3"])[0])
             except ValueError:
                 self._error(400, "invalid_limit", "History limit must be an integer.")
@@ -318,9 +325,18 @@ class ApiHandler(BaseHTTPRequestHandler):
             limit = max(1, min(limit, 20))
             with _connect() as connection:
                 rows = connection.execute(
-                    "SELECT revision, created_utc, graphics_json FROM profile_revisions "
-                    "WHERE profile_name = ? ORDER BY revision DESC LIMIT ?",
-                    (profile_name, limit),
+                    "WITH graphics_changes AS ("
+                    " SELECT revision, created_utc, graphics_json, "
+                    " LAG(graphics_json) OVER (PARTITION BY profile_name ORDER BY revision) AS previous_graphics "
+                    " FROM profile_revisions WHERE profile_name = ?"
+                    "), ranked_changes AS ("
+                    " SELECT revision, created_utc, graphics_json, "
+                    " ROW_NUMBER() OVER (ORDER BY revision DESC) AS history_rank "
+                    " FROM graphics_changes "
+                    " WHERE previous_graphics IS NULL OR graphics_json != previous_graphics"
+                    ") SELECT revision, created_utc, graphics_json FROM ranked_changes "
+                    "WHERE history_rank <= ? ORDER BY revision DESC",
+                    (profile_name, limit + 1),
                 ).fetchall()
             self._send_json(
                 200,
@@ -341,12 +357,11 @@ class ApiHandler(BaseHTTPRequestHandler):
 
         if parts == ["v1", "releases", "latest"]:
             with _connect() as connection:
-                row = connection.execute(
-                    "SELECT manifest_json FROM releases ORDER BY published_utc DESC, rowid DESC LIMIT 1"
-                ).fetchone()
-            if row is None:
+                rows = connection.execute("SELECT version, manifest_json FROM releases").fetchall()
+            if not rows:
                 self._error(404, "no_release", "No launcher release has been published.")
             else:
+                row = max(rows, key=lambda item: _launcher_version_key(item["version"]))
                 self._send_bytes(200, row["manifest_json"].encode("utf-8"), "application/json; charset=utf-8", cache_control="no-cache")
             return
 
@@ -381,12 +396,12 @@ class ApiHandler(BaseHTTPRequestHandler):
 
         if len(parts) == 4 and parts[:2] == ["v1", "tools"]:
             tool_name, version = parts[2], parts[3]
-            if tool_name != "logihub" or not RELEASE_VERSION.fullmatch(version):
+            if tool_name != "logihub" or not TOOL_VERSION.fullmatch(version):
                 self._error(404, "tool_not_found", "Tool version was not found.")
                 return
             with _connect() as connection:
                 row = connection.execute(
-                    "SELECT 1 FROM tool_assets WHERE tool_name = ? AND version = ?",
+                    "SELECT sha256, size FROM tool_assets WHERE tool_name = ? AND version = ?",
                     (tool_name, version),
                 ).fetchone()
             if row is None:
@@ -398,16 +413,23 @@ class ApiHandler(BaseHTTPRequestHandler):
             except OSError:
                 self._error(503, "tool_asset_unavailable", "Tool asset is unavailable.")
                 return
+            if len(body) != row["size"] or hashlib.sha256(body).hexdigest() != row["sha256"]:
+                self._error(503, "tool_asset_integrity", "Tool asset failed its stored size/hash check.")
+                return
             self._send_bytes(200, body, "application/octet-stream", cache_control="public, max-age=31536000, immutable")
             return
 
         if len(parts) == 4 and parts[:2] == ["v1", "releases"] and parts[3] in ("launcher", "graphics-module"):
             version, kind = parts[2], parts[3]
-            if not RELEASE_VERSION.fullmatch(version):
+            if not LAUNCHER_RELEASE_VERSION.fullmatch(version):
                 self._error(400, "invalid_release_version", "Release version is invalid.")
                 return
             with _connect() as connection:
-                row = connection.execute("SELECT 1 FROM releases WHERE version = ?", (version,)).fetchone()
+                row = connection.execute(
+                    "SELECT launcher_sha256, launcher_size, module_sha256, module_size "
+                    "FROM releases WHERE version = ?",
+                    (version,),
+                ).fetchone()
             if row is None:
                 self._error(404, "release_not_found", "Release was not found.")
                 return
@@ -416,6 +438,11 @@ class ApiHandler(BaseHTTPRequestHandler):
                 body = path.read_bytes()
             except OSError:
                 self._error(503, "release_asset_unavailable", "Release asset is unavailable.")
+                return
+            expected_sha256 = row["launcher_sha256"] if kind == "launcher" else row["module_sha256"]
+            expected_size = row["launcher_size"] if kind == "launcher" else row["module_size"]
+            if len(body) != expected_size or hashlib.sha256(body).hexdigest() != expected_sha256:
+                self._error(503, "release_asset_integrity", "Release asset failed its stored size/hash check.")
                 return
             content_type = "application/octet-stream" if kind == "launcher" else "text/plain; charset=utf-8"
             self._send_bytes(200, body, content_type, cache_control="public, max-age=31536000, immutable")
@@ -500,10 +527,12 @@ class ApiHandler(BaseHTTPRequestHandler):
         created_utc = _utc_now()
         with DB_LOCK, _connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            current = connection.execute(
-                "SELECT COALESCE(MAX(revision), 0) AS revision FROM profile_revisions WHERE profile_name = ?",
+            current_row = connection.execute(
+                "SELECT revision, created_utc, profile_json, graphics_json, cfg_text "
+                "FROM profile_revisions WHERE profile_name = ? ORDER BY revision DESC LIMIT 1",
                 (profile_name,),
-            ).fetchone()["revision"]
+            ).fetchone()
+            current = current_row["revision"] if current_row is not None else 0
             if current != expected_revision:
                 connection.rollback()
                 self._send_json(
@@ -511,20 +540,31 @@ class ApiHandler(BaseHTTPRequestHandler):
                     {"error": "revision_conflict", "message": "Profile changed since this client read it.", "currentRevision": current},
                 )
                 return
-            new_revision = current + 1
-            connection.execute(
-                "INSERT INTO profile_revisions "
-                "(profile_name, revision, created_utc, profile_json, graphics_json, cfg_text) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (profile_name, new_revision, created_utc, profile_json, graphics_json, cfg),
+            unchanged = bool(
+                current_row is not None
+                and current_row["profile_json"] == profile_json
+                and current_row["graphics_json"] == graphics_json
+                and current_row["cfg_text"] == cfg
             )
-            _mark_github_mirror_dirty(connection)
+            if unchanged:
+                new_revision = current
+                created_utc = current_row["created_utc"]
+            else:
+                new_revision = current + 1
+                connection.execute(
+                    "INSERT INTO profile_revisions "
+                    "(profile_name, revision, created_utc, profile_json, graphics_json, cfg_text) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (profile_name, new_revision, created_utc, profile_json, graphics_json, cfg),
+                )
+                _mark_github_mirror_dirty(connection)
             connection.commit()
 
         response = {
             "profile": profile_name,
             "revision": new_revision,
             "createdUtc": created_utc,
+            "unchanged": unchanged,
             "hashes": {
                 "profile": hashlib.sha256(profile_json.encode("utf-8")).hexdigest(),
                 "graphics": hashlib.sha256(graphics_json.encode("utf-8")).hexdigest(),
@@ -534,7 +574,7 @@ class ApiHandler(BaseHTTPRequestHandler):
         self._send_json(200, response, headers={"ETag": f'"{profile_name}-{new_revision}"'})
 
     def _put_release_asset(self, version: str, kind: str) -> None:
-        if not RELEASE_VERSION.fullmatch(version):
+        if not LAUNCHER_RELEASE_VERSION.fullmatch(version):
             self._error(400, "invalid_release_version", "Release version is invalid.")
             return
         if not self._authorized("CAFELAUNCHER_PUBLISH_TOKEN"):
@@ -578,7 +618,7 @@ class ApiHandler(BaseHTTPRequestHandler):
         )
 
     def _put_release_manifest(self, version: str) -> None:
-        if not RELEASE_VERSION.fullmatch(version):
+        if not LAUNCHER_RELEASE_VERSION.fullmatch(version):
             self._error(400, "invalid_release_version", "Release version is invalid.")
             return
         if not self._authorized("CAFELAUNCHER_PUBLISH_TOKEN"):
@@ -655,7 +695,7 @@ class ApiHandler(BaseHTTPRequestHandler):
         if tool_name != "logihub":
             self._error(404, "tool_not_found", "Tool was not found.")
             return
-        if not RELEASE_VERSION.fullmatch(version):
+        if not TOOL_VERSION.fullmatch(version):
             self._error(400, "invalid_release_version", "Tool version is invalid.")
             return
         if not self._authorized("CAFELAUNCHER_PUBLISH_TOKEN"):

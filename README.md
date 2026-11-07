@@ -9,9 +9,10 @@ The prototype provides anonymous read endpoints for profile bundles and release 
 - API prototype implemented in `server.py`.
 - Validation rules mirrored from the current CafeLauncher source for profile fields, graphics values/policies, CFG sensitivity, CFG URL migration, and website URLs.
 - `import_repository.py` validates and imports the six checked-in profile/graphics/CFG bundles into the local SQLite database. The existing profile CFG URLs are rewritten to `/v1/cfg/{file}` routes.
-- Fifteen standard-library unit and HTTP integration tests cover validation, import, CFG serving, backup, sync conflicts/history, publishing, immutable assets, and mirror retry behavior.
+- Twenty standard-library unit and HTTP integration tests cover validation, import, CFG serving, backup, sync conflicts/history, publishing, asset integrity, and GitHub mirror ref-conflict/restart recovery.
 - `github_mirror.py` publishes an atomic public GitHub snapshot and keeps a durable SQLite generation marker for restart-safe retries.
 - No CafeLauncher client integration has been made.
+- The `/v1` API is not wire-compatible with GitHub REST. CafeLauncher still calls GitHub Contents, commits/compare/history, raw CFG/module, and updater endpoints directly; a client adapter and opt-in migration are required before this backend can replace GitHub.
 - Nothing has been deployed to the Ubuntu server or exposed with Tailscale Funnel.
 - The API contract is provisional and must be wired into CafeLauncher before these endpoints affect café PCs.
 
@@ -47,7 +48,7 @@ The server requires configured tokens at request time. It deliberately has no de
 | `GET /v1/profiles/{name}` | Latest profile JSON. |
 | `GET /v1/graphics/{name}` | Latest graphics preset JSON. |
 | `GET /v1/cfg/{filename}` | Latest CFG as UTF-8 text, such as `fab.cfg`. |
-| `GET /v1/graphics/{name}/history?limit=3` | Latest graphics snapshots and revision IDs. |
+| `GET /v1/graphics/{name}/history?limit=3` | Current distinct graphics snapshot plus up to three older graphics-only versions. |
 | `GET /v1/releases/latest` | Most recently published release manifest. |
 | `GET /v1/releases/{version}/launcher` | Immutable launcher asset. |
 | `GET /v1/releases/{version}/graphics-module` | Immutable graphics module asset. |
@@ -76,7 +77,7 @@ Send a full bundle using `PUT /v1/profiles/{name}/sync` with `Authorization: Bea
 }
 ```
 
-The example is only a shape example; CafeLauncher profiles and graphics presets have additional fields and validation. `expectedRevision: 0` creates the first revision. Later writes must send the current revision. A stale revision returns `409 Conflict` and the current revision number. A successful write returns a new revision and SHA-256 hashes for all three values.
+The example is only a shape example; CafeLauncher profiles and graphics presets have additional fields and validation. `expectedRevision: 0` creates the first revision. Later writes must send the current revision. A stale revision returns `409 Conflict` and the current revision number. A successful write returns the revision and SHA-256 hashes for all three values. An identical bundle returns the existing revision with `unchanged: true`; it does not add history or queue another GitHub mirror generation.
 
 Sync validation checks the launcher profile field types and ranges, supported push-to-talk key names, website URL shape, graphics setting ranges/enums and required values, display/refresh policies, and exactly one valid CFG `sensitivity` command in the range `(0, 20]`. It rejects unknown profile fields such as the retired `CS2Sensitivity` JSON field. Legacy raw GitHub CFG URLs are accepted only for the current profile-to-file mapping and normalized to backend routes. The launcher must still validate before applying values.
 
@@ -95,6 +96,8 @@ PUT /v1/admin/releases/{version}/manifest
 The manifest request is JSON and may contain a `releaseNotes` string. Both assets must be uploaded first. The server computes their sizes and SHA-256 hashes; clients retrieve these values from `GET /v1/releases/latest`. Published versions are immutable.
 
 The optional helper mirror supports `PUT /v1/admin/tools/logihub/{version}` with the publishing token. It computes and returns the helper's size and SHA-256; anonymous clients can fetch the latest metadata and the immutable versioned asset. The backend is ready to store this binary, but no helper executable has been copied yet.
+
+Launcher release versions must use CafeLauncher's four-part dotted `CAFE_RELEASE` format (`YYYY.M.D.N`). The `/v1/releases/latest` route and GitHub mirror choose the numerically highest version even if an older release is uploaded later. Helper versions keep their independent tag format.
 
 `publish.py` uploads a launcher/module release or helper binary and checks the server-returned hashes. It can be used later from a trusted local machine or a CI job; no GitHub Actions workflow has been changed.
 
@@ -140,7 +143,7 @@ Pause publishing while the backup runs to keep the database and asset snapshot a
 
 For a later Ubuntu deployment, run this service bound to loopback and expose only its local port through Funnel. CaféLauncher clients will use the resulting HTTPS `*.ts.net` URL; the clients will not need to join the tailnet. Do not bind the application to `0.0.0.0` when relying on Funnel as the public entry point.
 
-Use a systemd service and keep the two tokens in a root-readable environment file outside the project folder. Back up the SQLite database plus `data/releases/` and `data/tools/` together with `backup.py`. Deployment and Funnel configuration have not been performed.
+Use separate `systemd` services for the API and mirror worker, with secrets in root-readable environment files outside the project folder. The step-by-step Ubuntu checklist is in [`deploy/DEPLOYMENT.md`](deploy/DEPLOYMENT.md). Back up the SQLite database plus `data/releases/` and `data/tools/` together with `backup.py`. Deployment and Funnel configuration have not been performed.
 
 ## GitHub fallback mirror
 
@@ -152,7 +155,7 @@ CAFELAUNCHER_GITHUB_BRANCH=main
 CAFELAUNCHER_GITHUB_TOKEN=<fine-grained-token>
 ```
 
-The backend records a new mirror generation in the same SQLite transaction as every accepted profile sync, release publication, helper publication, and repository import. Run `python3 github_mirror.py --watch` as a separate persistent service. It checks for new generations every 10 seconds, retries failures with increasing delays capped at 20 minutes, and resumes pending generations after process or machine restart. `python3 github_mirror.py --once` attempts one update; `--status` shows whether the last generation reached GitHub. The example systemd unit is `deploy/cafelauncher-github-mirror.service`; adjust its paths/user and use the same `CAFELAUNCHER_DATA_DIR` as the API service before installing it.
+The backend records a new mirror generation in the same SQLite transaction as every changed profile bundle, release publication, helper publication, and repository import. Identical profile bundles do not create a revision or mirror job. Graphics history records only revisions where the graphics JSON changed, matching CafeLauncher's GitHub path history; profile-only or CFG-only syncs do not appear as graphics versions. Run `python3 github_mirror.py --watch` as a separate persistent service. It checks for new generations every 10 seconds, retries failures with increasing delays capped at 20 minutes, and resumes pending generations after process or machine restart. `python3 github_mirror.py --once` attempts one update; `--status` shows whether the last generation reached GitHub. The example systemd unit is `deploy/cafelauncher-github-mirror.service`; adjust its paths/user and use the same `CAFELAUNCHER_DATA_DIR` as the API service before installing it.
 
 Each successful update is one GitHub commit containing a `mirror-manifest.json`, current profile/graphics/CFG files, recent graphics history, published releases, and mirrored helper assets. The manifest maps logical API resources to raw GitHub paths and includes revisions and SHA-256 values for a future CafeLauncher fallback adapter. Existing binary limits stay below GitHub's 100 MiB per-blob limit, although frequent large-file updates increase mirror repository history and storage. [GitHub Git blobs API](https://docs.github.com/en/rest/git/blobs), [GitHub repository limits](https://docs.github.com/en/repositories/creating-and-managing-repositories/repository-limits)
 

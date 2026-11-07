@@ -91,15 +91,21 @@ def build_snapshot() -> tuple[int, dict[str, bytes]]:
             "ORDER BY p.profile_name"
         ).fetchall()
         graphics_history_rows = connection.execute(
-            "SELECT profile_name, revision, created_utc, graphics_json FROM ("
-            "SELECT profile_name, revision, created_utc, graphics_json, "
-            "ROW_NUMBER() OVER (PARTITION BY profile_name ORDER BY revision DESC) AS row_number "
-            "FROM profile_revisions"
-            ") WHERE row_number <= 20 ORDER BY profile_name, revision DESC"
+            "WITH graphics_changes AS ("
+            " SELECT profile_name, revision, created_utc, graphics_json, "
+            " LAG(graphics_json) OVER (PARTITION BY profile_name ORDER BY revision) AS previous_graphics "
+            " FROM profile_revisions"
+            "), ranked_changes AS ("
+            " SELECT profile_name, revision, created_utc, graphics_json, "
+            " ROW_NUMBER() OVER (PARTITION BY profile_name ORDER BY revision DESC) AS history_rank "
+            " FROM graphics_changes "
+            " WHERE previous_graphics IS NULL OR graphics_json != previous_graphics"
+            ") SELECT profile_name, revision, created_utc, graphics_json FROM ranked_changes "
+            "WHERE history_rank <= 20 ORDER BY profile_name, revision DESC"
         ).fetchall()
         release_rows = connection.execute(
             "SELECT version, published_utc, manifest_json, launcher_sha256, launcher_size, module_sha256, module_size "
-            "FROM releases ORDER BY published_utc, rowid"
+            "FROM releases"
         ).fetchall()
         tool_rows = connection.execute(
             "SELECT tool_name, version, published_utc, sha256, size FROM tool_assets ORDER BY tool_name, published_utc, rowid"
@@ -140,6 +146,7 @@ def build_snapshot() -> tuple[int, dict[str, bytes]]:
             },
         }
 
+    release_rows = sorted(release_rows, key=lambda row: server._launcher_version_key(row["version"]))
     releases: dict[str, object] = {}
     for row in release_rows:
         version = row["version"]
