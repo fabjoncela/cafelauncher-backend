@@ -1,0 +1,23 @@
+[Unit]
+Description=CafeLauncher Backend GitHub mirror worker
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=cafelauncher
+Group=cafelauncher
+WorkingDirectory=/opt/cafelauncher-backend
+EnvironmentFile=/etc/cafelauncher-github-mirror.env
+Environment=CAFELAUNCHER_DATA_DIR=/var/lib/cafelauncher-backend
+ExecStart=/usr/bin/python3 /opt/cafelauncher-backend/github_mirror.py --watch --poll-seconds 10
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/cafelauncher-backend
+
+[Install]
+WantedBy=multi-user.target

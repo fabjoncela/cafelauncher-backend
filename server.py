@@ -99,8 +99,26 @@ def _initialize() -> None:
                 size INTEGER NOT NULL,
                 PRIMARY KEY (tool_name, version)
             );
+            CREATE TABLE IF NOT EXISTS github_mirror_state (
+                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                generation INTEGER NOT NULL,
+                mirrored_generation INTEGER NOT NULL,
+                last_attempt_utc TEXT,
+                last_success_utc TEXT,
+                last_error TEXT
+            );
             """
         )
+        connection.execute(
+            "INSERT OR IGNORE INTO github_mirror_state "
+            "(singleton, generation, mirrored_generation, last_attempt_utc, last_success_utc, last_error) "
+            "VALUES (1, 1, 0, NULL, NULL, NULL)"
+        )
+
+
+def _mark_github_mirror_dirty(connection: sqlite3.Connection) -> int:
+    connection.execute("UPDATE github_mirror_state SET generation = generation + 1 WHERE singleton = 1")
+    return connection.execute("SELECT generation FROM github_mirror_state WHERE singleton = 1").fetchone()[0]
 
 
 class BoundedHTTPServer(ThreadingHTTPServer):
@@ -500,6 +518,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                 "VALUES (?, ?, ?, ?, ?, ?)",
                 (profile_name, new_revision, created_utc, profile_json, graphics_json, cfg),
             )
+            _mark_github_mirror_dirty(connection)
             connection.commit()
 
         response = {
@@ -628,6 +647,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (version, published_utc, manifest_json, launcher_hash, launcher_size, module_hash, module_size),
             )
+            _mark_github_mirror_dirty(connection)
             connection.commit()
         self._send_json(201, manifest, cache_control="no-cache")
 
@@ -675,6 +695,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                 "INSERT INTO tool_assets (tool_name, version, published_utc, sha256, size) VALUES (?, ?, ?, ?, ?)",
                 (tool_name, version, published_utc, digest, len(body)),
             )
+            _mark_github_mirror_dirty(connection)
             connection.commit()
 
         self._send_json(

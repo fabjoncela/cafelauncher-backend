@@ -62,6 +62,7 @@ def import_bundles(bundles: list[tuple[str, dict, dict, str]]) -> int:
                     cfg,
                 ),
             )
+        server._mark_github_mirror_dirty(connection)
         connection.commit()
     return len(bundles)
 

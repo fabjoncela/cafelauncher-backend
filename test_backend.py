@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import base64
 import hashlib
 import os
 import sqlite3
@@ -17,6 +18,7 @@ import import_repository
 import publish
 import server
 import backup
+import github_mirror
 from validation import PROFILE_CFG_FILES, PROFILE_DEFAULTS, normalize_graphics, normalize_profile, validate_cfg
 
 
@@ -155,6 +157,42 @@ class ValidationTests(unittest.TestCase):
             with self.subTest(url=url), self.assertRaises(ValueError):
                 publish._base_url(url)
         self.assertEqual(publish._base_url("http://127.0.0.1:8090/"), "http://127.0.0.1:8090")
+
+
+class GitHubMirrorTests(unittest.TestCase):
+    def test_publisher_creates_atomic_commit_on_existing_mirror_branch(self) -> None:
+        client = github_mirror.GitHubClient("example/data", "t" * 40)
+        requests = []
+        content = b'{"schemaVersion":1}'
+        expected_blob = github_mirror._git_blob_sha(content)
+        client.current_tree = lambda _branch: ("parent-sha", "base-tree-sha", {})
+
+        def fake_request(method, path, payload=None):
+            requests.append((method, path, payload))
+            if path == "/git/blobs":
+                raw = base64.b64decode(payload["content"])
+                return {"sha": github_mirror._git_blob_sha(raw)}
+            if path == "/git/trees":
+                return {"sha": "tree-sha"}
+            if path == "/git/commits":
+                self.assertEqual(payload["parents"], ["parent-sha"])
+                return {"sha": "commit-sha"}
+            if path == "/git/refs/heads/main":
+                self.assertEqual(payload, {"sha": "commit-sha", "force": False})
+                return {}
+            self.fail(f"Unexpected GitHub API request: {method} {path}")
+
+        client.request = fake_request
+        commit_sha = client.publish_snapshot("main", 1, {"mirror-manifest.json": content})
+        self.assertEqual(commit_sha, "commit-sha")
+        self.assertEqual(requests[0][0:2], ("POST", "/git/blobs"))
+        self.assertEqual(expected_blob, github_mirror._git_blob_sha(content))
+
+    def test_publisher_requires_initialized_repository_branch(self) -> None:
+        client = github_mirror.GitHubClient("example/data", "t" * 40)
+        client.current_tree = lambda _branch: (None, None, {})
+        with self.assertRaisesRegex(github_mirror.MirrorError, "initial README commit"):
+            client.publish_snapshot("main", 1, {"mirror-manifest.json": b"{}"})
 
 
 class ImportTests(unittest.TestCase):
@@ -381,6 +419,68 @@ class ApiTests(unittest.TestCase):
             status, _, body = self.request("/v1/tools/logihub/latest")
             self.assertEqual(status, 200)
             self.assertEqual(json.loads(body)["version"], "v0.1.0-test")
+
+    def test_mirror_snapshot_and_durable_retry_after_github_failure(self) -> None:
+        sync_token = os.environ["CAFELAUNCHER_SYNC_TOKEN"]
+        status, _, _ = self.put_bundle(0, token=sync_token)
+        self.assertEqual(status, 200)
+        publish_token = os.environ["CAFELAUNCHER_PUBLISH_TOKEN"]
+        launcher, module, tool = b"launcher mirror data", b"graphics mirror data", b"helper mirror data"
+        for kind, body in (("launcher", launcher), ("graphics-module", module)):
+            status, _, _ = self.request(
+                f"/v1/admin/releases/2026.11.07.9/{kind}",
+                method="PUT",
+                body=body,
+                token=publish_token,
+                content_type="application/octet-stream",
+            )
+            self.assertEqual(status, 201)
+        status, _, _ = self.request(
+            "/v1/admin/releases/2026.11.07.9/manifest",
+            method="PUT",
+            body=json.dumps({"releaseNotes": "mirror fixture"}).encode(),
+            token=publish_token,
+        )
+        self.assertEqual(status, 201)
+        status, _, _ = self.request(
+            "/v1/admin/tools/logihub/v1.2.3",
+            method="PUT",
+            body=tool,
+            token=publish_token,
+            content_type="application/octet-stream",
+        )
+        self.assertEqual(status, 201)
+        with patch.dict(
+            os.environ,
+            {
+                "CAFELAUNCHER_GITHUB_REPO": "example/cafelauncher-data",
+                "CAFELAUNCHER_GITHUB_BRANCH": "main",
+                "CAFELAUNCHER_GITHUB_TOKEN": "github-token-" + "g" * 40,
+            },
+        ):
+            generation, files = github_mirror.build_snapshot()
+            self.assertEqual(files["cfg/fab.cfg"], b'sensitivity "1.2"\n')
+            self.assertEqual(files["releases/2026.11.07.9/launcher.bin"], launcher)
+            self.assertEqual(files["releases/2026.11.07.9/graphics-module.ps1"], module)
+            self.assertEqual(files["tools/logihub/v1.2.3/asset.bin"], tool)
+            mirror_manifest = json.loads(files["mirror-manifest.json"])
+            self.assertEqual(mirror_manifest["generation"], generation)
+            self.assertEqual(mirror_manifest["profiles"]["FabMode"]["revision"], 1)
+
+            with patch.object(github_mirror.GitHubClient, "publish_snapshot", side_effect=github_mirror.MirrorError("simulated GitHub outage")):
+                with self.assertRaises(github_mirror.MirrorError):
+                    github_mirror.sync_once()
+            with server._connect() as connection:
+                failed = connection.execute("SELECT generation, mirrored_generation, last_error FROM github_mirror_state").fetchone()
+            self.assertGreater(failed["generation"], failed["mirrored_generation"])
+            self.assertIn("simulated GitHub outage", failed["last_error"])
+
+            with patch.object(github_mirror.GitHubClient, "publish_snapshot", return_value="a" * 40):
+                self.assertTrue(github_mirror.sync_once())
+            with server._connect() as connection:
+                recovered = connection.execute("SELECT generation, mirrored_generation, last_error FROM github_mirror_state").fetchone()
+            self.assertEqual(recovered["generation"], recovered["mirrored_generation"])
+            self.assertIsNone(recovered["last_error"])
 
 
 if __name__ == "__main__":
