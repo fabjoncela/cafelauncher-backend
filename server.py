@@ -13,7 +13,7 @@ import sqlite3
 import tempfile
 import threading
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
@@ -40,6 +40,17 @@ def _utc_now() -> str:
 
 def _launcher_version_key(version: str) -> tuple[int, int, int, int]:
     return tuple(int(part) for part in version.split("."))
+
+
+def _is_launcher_release_version(version: str) -> bool:
+    if LAUNCHER_RELEASE_VERSION.fullmatch(version) is None:
+        return False
+    try:
+        year, month, day, _sequence = (int(part) for part in version.split("."))
+        date(year, month, day)
+    except ValueError:
+        return False
+    return True
 
 
 def _json_bytes(value: object) -> bytes:
@@ -283,6 +294,12 @@ class ApiHandler(BaseHTTPRequestHandler):
         parts = [unquote(part) for part in parsed.path.strip("/").split("/") if part]
 
         if parts == ["v1", "health"]:
+            try:
+                with _connect() as connection:
+                    connection.execute("SELECT 1").fetchone()
+            except sqlite3.Error:
+                self._error(503, "storage_unavailable", "Backend storage is unavailable.")
+                return
             self._send_json(200, {"status": "ok", "version": APP_VERSION}, cache_control="no-store")
             return
 
@@ -422,7 +439,7 @@ class ApiHandler(BaseHTTPRequestHandler):
 
         if len(parts) == 4 and parts[:2] == ["v1", "releases"] and parts[3] in ("launcher", "graphics-module"):
             version, kind = parts[2], parts[3]
-            if not LAUNCHER_RELEASE_VERSION.fullmatch(version):
+            if not _is_launcher_release_version(version):
                 self._error(400, "invalid_release_version", "Release version is invalid.")
                 return
             with _connect() as connection:
@@ -575,7 +592,7 @@ class ApiHandler(BaseHTTPRequestHandler):
         self._send_json(200, response, headers={"ETag": f'"{profile_name}-{new_revision}"'})
 
     def _put_release_asset(self, version: str, kind: str) -> None:
-        if not LAUNCHER_RELEASE_VERSION.fullmatch(version):
+        if not _is_launcher_release_version(version):
             self._error(400, "invalid_release_version", "Release version is invalid.")
             return
         if not self._authorized("CAFELAUNCHER_PUBLISH_TOKEN"):
@@ -606,6 +623,23 @@ class ApiHandler(BaseHTTPRequestHandler):
             release_dir.mkdir(parents=True, exist_ok=True)
             filename = "launcher.bin" if kind == "launcher" else "graphics-module.ps1"
             target = release_dir / filename
+            if target.exists():
+                try:
+                    existing_body = target.read_bytes()
+                except OSError:
+                    connection.rollback()
+                    self._error(503, "release_asset_unavailable", "Previously staged release asset is unavailable.")
+                    return
+                if existing_body != body:
+                    connection.rollback()
+                    self._error(409, "release_asset_conflict", "A different asset is already staged for this release version.")
+                    return
+                connection.commit()
+                self._send_json(
+                    201,
+                    {"version": version, "asset": kind, "size": len(body), "sha256": hashlib.sha256(body).hexdigest()},
+                )
+                return
             temporary_name = None
             try:
                 with tempfile.NamedTemporaryFile(dir=release_dir, prefix=".upload-", delete=False) as temporary:
@@ -622,7 +656,7 @@ class ApiHandler(BaseHTTPRequestHandler):
         )
 
     def _put_release_manifest(self, version: str) -> None:
-        if not LAUNCHER_RELEASE_VERSION.fullmatch(version):
+        if not _is_launcher_release_version(version):
             self._error(400, "invalid_release_version", "Release version is invalid.")
             return
         if not self._authorized("CAFELAUNCHER_PUBLISH_TOKEN"):

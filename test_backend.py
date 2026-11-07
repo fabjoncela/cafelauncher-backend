@@ -297,6 +297,11 @@ class ImportTests(unittest.TestCase):
                 self.assertEqual(count, 1)
                 self.assertEqual((result / "releases" / "v1" / "launcher.bin").read_bytes(), b"backup asset")
 
+                nested_destination = Path(data_temp) / "releases" / "nested-backup"
+                with self.assertRaisesRegex(ValueError, "outside and separate"):
+                    backup.create_backup(nested_destination)
+                self.assertFalse(nested_destination.exists())
+
 
 class ApiTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -345,6 +350,12 @@ class ApiTests(unittest.TestCase):
             "cfg": cfg,
         }
         return self.request("/v1/profiles/FabMode/sync", method="PUT", body=json.dumps(payload).encode(), token=token)
+
+    def test_health_reports_database_unavailable(self) -> None:
+        with patch.object(server, "_connect", side_effect=sqlite3.OperationalError("simulated storage outage")):
+            status, _, body = self.request("/v1/health")
+        self.assertEqual(status, 503)
+        self.assertEqual(json.loads(body)["error"], "storage_unavailable")
 
     def test_token_required_atomic_revision_conflict_and_history(self) -> None:
         status, _, _ = self.put_bundle(0)
@@ -484,6 +495,14 @@ class ApiTests(unittest.TestCase):
             content_type="application/octet-stream",
         )
         self.assertEqual(status, 400)
+        status, _, _ = self.request(
+            "/v1/admin/releases/2026.13.07.1/launcher",
+            method="PUT",
+            body=launcher_asset(b"invalid calendar date"),
+            token=os.environ["CAFELAUNCHER_PUBLISH_TOKEN"],
+            content_type="application/octet-stream",
+        )
+        self.assertEqual(status, 400)
 
     def test_release_publish_manifest_hashes_and_download(self) -> None:
         token = os.environ["CAFELAUNCHER_PUBLISH_TOKEN"]
@@ -508,6 +527,22 @@ class ApiTests(unittest.TestCase):
         status, _, body = self.request("/v1/releases/2026.11.07.1/launcher")
         self.assertEqual(status, 200)
         self.assertEqual(body, launcher)
+
+    def test_unpublished_release_asset_cannot_be_replaced_with_different_bytes(self) -> None:
+        token = os.environ["CAFELAUNCHER_PUBLISH_TOKEN"]
+        path = "/v1/admin/releases/2026.11.07.4/launcher"
+        original = launcher_asset(b"first publisher")
+        replacement = launcher_asset(b"second publisher")
+        status, _, _ = self.request(path, method="PUT", body=original, token=token, content_type="application/octet-stream")
+        self.assertEqual(status, 201)
+        status, _, body = self.request(path, method="PUT", body=replacement, token=token, content_type="application/octet-stream")
+        self.assertEqual(status, 409)
+        self.assertEqual(json.loads(body)["error"], "release_asset_conflict")
+        staged = Path(self.temp.name) / "releases" / "2026.11.07.4" / "launcher.bin"
+        self.assertEqual(staged.read_bytes(), original)
+        status, _, body = self.request(path, method="PUT", body=original, token=token, content_type="application/octet-stream")
+        self.assertEqual(status, 201)
+        self.assertEqual(json.loads(body)["sha256"], hashlib.sha256(original).hexdigest())
 
     def test_latest_release_uses_launcher_version_not_upload_time(self) -> None:
         token = os.environ["CAFELAUNCHER_PUBLISH_TOKEN"]

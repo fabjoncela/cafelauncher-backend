@@ -44,7 +44,7 @@ The server requires configured tokens at request time. It deliberately has no de
 
 | Method and route | Response |
 | --- | --- |
-| `GET /v1/health` | Service status and prototype version. |
+| `GET /v1/health` | Service status and prototype version; returns `503` if SQLite storage is unavailable. |
 | `GET /v1/profiles/{name}` | Latest profile JSON. |
 | `GET /v1/graphics/{name}` | Latest graphics preset JSON. |
 | `GET /v1/cfg/{filename}` | Latest CFG as UTF-8 text, such as `fab.cfg`. |
@@ -93,11 +93,11 @@ PUT /v1/admin/releases/{version}/graphics-module
 PUT /v1/admin/releases/{version}/manifest
 ```
 
-The manifest request is JSON and may contain a `releaseNotes` string. Both assets must be uploaded first. The server computes their sizes and SHA-256 hashes; clients retrieve these values from `GET /v1/releases/latest`. Published versions are immutable.
+The manifest request is JSON and may contain a `releaseNotes` string. Both assets must be uploaded first. The server computes their sizes and SHA-256 hashes; clients retrieve these values from `GET /v1/releases/latest`. A staged asset cannot be replaced by different bytes, even before its manifest is published; identical upload retries are allowed. Use a new version after abandoning a partially staged release.
 
 The optional helper mirror supports `PUT /v1/admin/tools/logihub/{version}` with the publishing token. It computes and returns the helper's size and SHA-256; anonymous clients can fetch the latest metadata and the immutable versioned asset. The backend is ready to store this binary, but no helper executable has been copied yet.
 
-Launcher release versions must use CafeLauncher's four-part dotted `CAFE_RELEASE` format (`YYYY.M.D.N`). The `/v1/releases/latest` route and GitHub mirror choose the numerically highest version even if an older release is uploaded later. Helper versions keep their independent tag format.
+Launcher release versions must use CafeLauncher's four-part dotted `CAFE_RELEASE` format (`YYYY.M.D.N`) and a real calendar date. The `/v1/releases/latest` route and GitHub mirror choose the numerically highest version even if an older release is uploaded later. Helper versions keep their independent tag format.
 
 Launcher release uploads must be between 10,000 and 1,000,000 bytes, matching the current CafeLauncher updater's metadata validation. The graphics module is limited to 8 MiB.
 
@@ -133,7 +133,7 @@ The initial local import has been performed. It created revision 1 for FabMode, 
 
 ## Backup
 
-Create each backup in a new or empty private directory. The script uses SQLite's online backup API so committed WAL data is included, then copies the release and helper asset directories:
+Create each backup in a new or empty private directory outside the live backend data directory. The script uses SQLite's online backup API so committed WAL data is included, then copies the release and helper asset directories:
 
 ```powershell
 python .\backup.py 'D:\CafeLauncherBackups\2026-11-07'
