@@ -24,7 +24,8 @@ from validation import PROFILE_CFG_FILES, normalize_graphics, normalize_profile,
 APP_VERSION = "0.1.0"
 MAX_SYNC_BYTES = 4 * 1024 * 1024
 MAX_CFG_BYTES = 2 * 1024 * 1024
-MAX_LAUNCHER_BYTES = 64 * 1024 * 1024
+MIN_LAUNCHER_BYTES = 10_000
+MAX_LAUNCHER_BYTES = 1_000_000
 MAX_MODULE_BYTES = 8 * 1024 * 1024
 MAX_TOOL_BYTES = 32 * 1024 * 1024
 PROFILE_NAME = re.compile(r"[A-Za-z0-9_-]{1,32}\Z")
@@ -591,6 +592,9 @@ class ApiHandler(BaseHTTPRequestHandler):
         if not body:
             self._error(400, "empty_asset", "Release asset cannot be empty.")
             return
+        if kind == "launcher" and len(body) < MIN_LAUNCHER_BYTES:
+            self._error(422, "launcher_asset_too_small", "Launcher asset must be at least 10,000 bytes.")
+            return
         with DB_LOCK, _connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             published = connection.execute("SELECT 1 FROM releases WHERE version = ?", (version,)).fetchone()
@@ -648,7 +652,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                 module = module_path.read_bytes()
                 launcher_size = len(launcher)
                 module_size = len(module)
-                if not (0 < launcher_size <= MAX_LAUNCHER_BYTES and 0 < module_size <= MAX_MODULE_BYTES):
+                if not (MIN_LAUNCHER_BYTES <= launcher_size <= MAX_LAUNCHER_BYTES and 0 < module_size <= MAX_MODULE_BYTES):
                     raise OSError("asset size is invalid")
                 launcher_hash = hashlib.sha256(launcher).hexdigest()
                 module_hash = hashlib.sha256(module).hexdigest()

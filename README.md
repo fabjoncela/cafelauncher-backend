@@ -99,6 +99,8 @@ The optional helper mirror supports `PUT /v1/admin/tools/logihub/{version}` with
 
 Launcher release versions must use CafeLauncher's four-part dotted `CAFE_RELEASE` format (`YYYY.M.D.N`). The `/v1/releases/latest` route and GitHub mirror choose the numerically highest version even if an older release is uploaded later. Helper versions keep their independent tag format.
 
+Launcher release uploads must be between 10,000 and 1,000,000 bytes, matching the current CafeLauncher updater's metadata validation. The graphics module is limited to 8 MiB.
+
 `publish.py` uploads a launcher/module release or helper binary and checks the server-returned hashes. It can be used later from a trusted local machine or a CI job; no GitHub Actions workflow has been changed.
 
 Example commands for a future deployment:

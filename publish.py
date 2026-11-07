@@ -13,6 +13,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+import server
+
 
 def _base_url(value: str) -> str:
     try:
@@ -55,25 +57,25 @@ def _put(url: str, token: str, body: bytes, content_type: str) -> dict:
         raise RuntimeError("Backend returned a non-JSON upload response.") from error
 
 
-def _read_asset(path: Path, maximum: int) -> tuple[bytes, str]:
+def _read_asset(path: Path, maximum: int, minimum: int = 1) -> tuple[bytes, str]:
     try:
         body = path.read_bytes()
     except OSError as error:
         raise ValueError(f"Could not read artifact {path}: {error}") from error
-    if not body or len(body) > maximum:
-        raise ValueError(f"Artifact {path} must contain between 1 byte and {maximum} bytes.")
+    if len(body) < minimum or len(body) > maximum:
+        raise ValueError(f"Artifact {path} must contain between {minimum} and {maximum} bytes.")
     return body, hashlib.sha256(body).hexdigest()
 
 
 def publish_release(args: argparse.Namespace, token: str, base: str) -> None:
     version = quote(args.version, safe=".-_")
     artifacts = (
-        ("launcher", args.launcher, 64 * 1024 * 1024, "application/octet-stream"),
-        ("graphics-module", args.graphics_module, 8 * 1024 * 1024, "application/octet-stream"),
+        ("launcher", args.launcher, server.MAX_LAUNCHER_BYTES, "application/octet-stream", server.MIN_LAUNCHER_BYTES),
+        ("graphics-module", args.graphics_module, server.MAX_MODULE_BYTES, "application/octet-stream", 1),
     )
     expected_hashes = {}
-    for kind, path, maximum, content_type in artifacts:
-        body, digest = _read_asset(path, maximum)
+    for kind, path, maximum, content_type, minimum in artifacts:
+        body, digest = _read_asset(path, maximum, minimum)
         expected_hashes[kind] = digest
         result = _put(f"{base}/v1/admin/releases/{version}/{kind}", token, body, content_type)
         if result.get("sha256") != digest or result.get("size") != len(body):
@@ -91,7 +93,7 @@ def publish_release(args: argparse.Namespace, token: str, base: str) -> None:
 
 def publish_tool(args: argparse.Namespace, token: str, base: str) -> None:
     version = quote(args.version, safe=".-_")
-    body, digest = _read_asset(args.asset, 32 * 1024 * 1024)
+    body, digest = _read_asset(args.asset, server.MAX_TOOL_BYTES)
     result = _put(f"{base}/v1/admin/tools/{quote(args.tool, safe='')}/{version}", token, body, "application/octet-stream")
     if result.get("sha256") != digest or result.get("size") != len(body):
         raise RuntimeError("Backend read-back metadata did not match the uploaded tool artifact.")

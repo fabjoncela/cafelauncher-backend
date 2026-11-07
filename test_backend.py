@@ -34,6 +34,10 @@ def profile_payload(name: str = "FabMode") -> dict:
     return normalize_profile(name, profile)
 
 
+def launcher_asset(label: bytes) -> bytes:
+    return label + b"\n" + b"x" * max(0, 10_000 - len(label) - 1)
+
+
 def graphics_payload(name: str = "FabMode") -> dict:
     return {
         "SchemaVersion": 1,
@@ -457,6 +461,22 @@ class ApiTests(unittest.TestCase):
         )
         self.assertEqual(status, 400)
         status, _, _ = self.request(
+            "/v1/admin/releases/2026.11.07.1/launcher",
+            method="PUT",
+            body=b"too small",
+            token=os.environ["CAFELAUNCHER_PUBLISH_TOKEN"],
+            content_type="application/octet-stream",
+        )
+        self.assertEqual(status, 422)
+        status, _, _ = self.request(
+            "/v1/admin/releases/2026.11.07.1/launcher",
+            method="PUT",
+            body=b"x" * 1_000_001,
+            token=os.environ["CAFELAUNCHER_PUBLISH_TOKEN"],
+            content_type="application/octet-stream",
+        )
+        self.assertEqual(status, 413)
+        status, _, _ = self.request(
             "/v1/admin/releases/v1/launcher",
             method="PUT",
             body=b"not a CafeLauncher release version",
@@ -467,7 +487,7 @@ class ApiTests(unittest.TestCase):
 
     def test_release_publish_manifest_hashes_and_download(self) -> None:
         token = os.environ["CAFELAUNCHER_PUBLISH_TOKEN"]
-        launcher = b"launcher prototype\n"
+        launcher = launcher_asset(b"launcher prototype")
         module = b"# graphics module prototype\n"
         status, _, _ = self.request("/v1/admin/releases/2026.11.07.1/launcher", method="PUT", body=launcher, token=token, content_type="application/octet-stream")
         self.assertEqual(status, 201)
@@ -493,7 +513,7 @@ class ApiTests(unittest.TestCase):
         token = os.environ["CAFELAUNCHER_PUBLISH_TOKEN"]
 
         def publish(version: str) -> None:
-            for kind, body in (("launcher", f"launcher {version}".encode()), ("graphics-module", f"module {version}".encode())):
+            for kind, body in (("launcher", launcher_asset(f"launcher {version}".encode())), ("graphics-module", f"module {version}".encode())):
                 status, _, _ = self.request(
                     f"/v1/admin/releases/{version}/{kind}",
                     method="PUT",
@@ -558,7 +578,7 @@ class ApiTests(unittest.TestCase):
     def test_release_download_rejects_asset_changed_after_publish(self) -> None:
         token = os.environ["CAFELAUNCHER_PUBLISH_TOKEN"]
         version = "2026.11.07.3"
-        for kind, body in (("launcher", b"verified launcher"), ("graphics-module", b"verified module")):
+        for kind, body in (("launcher", launcher_asset(b"verified launcher")), ("graphics-module", b"verified module")):
             status, _, _ = self.request(
                 f"/v1/admin/releases/{version}/{kind}",
                 method="PUT",
@@ -589,7 +609,7 @@ class ApiTests(unittest.TestCase):
             launcher_path = Path(temp) / "cafe.bat"
             module_path = Path(temp) / "ApplyGraphics.ps1"
             tool_path = Path(temp) / "logihub.exe"
-            launcher_path.write_bytes(b"launcher test artifact")
+            launcher_path.write_bytes(launcher_asset(b"launcher test artifact"))
             module_path.write_bytes(b"graphics test artifact")
             tool_path.write_bytes(b"logihub test artifact")
             release_args = Namespace(
@@ -614,7 +634,7 @@ class ApiTests(unittest.TestCase):
         status, _, _ = self.put_bundle(0, token=sync_token)
         self.assertEqual(status, 200)
         publish_token = os.environ["CAFELAUNCHER_PUBLISH_TOKEN"]
-        launcher, module, tool = b"launcher mirror data", b"graphics mirror data", b"helper mirror data"
+        launcher, module, tool = launcher_asset(b"launcher mirror data"), b"graphics mirror data", b"helper mirror data"
         for kind, body in (("launcher", launcher), ("graphics-module", module)):
             status, _, _ = self.request(
                 f"/v1/admin/releases/2026.11.07.9/{kind}",
