@@ -129,8 +129,9 @@ class ValidationTests(unittest.TestCase):
             normalize_graphics("FabMode", invalid, profile_payload())
         invalid = graphics_payload()
         invalid["DisplayPolicy"] = "PreserveCurrent"
-        with self.assertRaises(ValueError):
-            normalize_graphics("FabMode", invalid, profile_payload())
+        normalized_legacy_policy = normalize_graphics("FabMode", invalid, profile_payload())
+        self.assertEqual(normalized_legacy_policy["DisplayPolicy"], "ApplyPreset")
+        self.assertEqual(normalized_legacy_policy["Settings"]["Width"], invalid["Settings"]["Width"])
 
     def test_cfg_matches_cafelauncher_sensitivity_rules(self) -> None:
         for cfg in ('sensitivity "0.001"\n', "sensitivity 20\n", "// sensitivity nope\nsensitivity 1.25 // ok\n"):

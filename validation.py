@@ -166,9 +166,12 @@ def normalize_graphics(profile_name: str, value: object, profile: dict) -> dict:
     if not isinstance(settings_value, dict):
         raise ValueError("Graphics Settings must be an object.")
 
-    display_policy = value.get("DisplayPolicy", "PreserveCurrent" if profile_name == "BrileMode" else "ApplyPreset")
+    display_policy = value.get("DisplayPolicy", "ApplyPreset")
     if display_policy not in ("ApplyPreset", "PreserveCurrent"):
         raise ValueError("DisplayPolicy must be ApplyPreset or PreserveCurrent.")
+    # CafeLauncher ConvertTo-CafeGraphicsPreset canonicalizes every preset to
+    # ApplyPreset, regardless of the stored DisplayPolicy value.
+    display_policy = "ApplyPreset"
     refresh_policy = value.get("RefreshPolicy", "Highest")
     if refresh_policy not in ("Highest", "Exact"):
         raise ValueError("RefreshPolicy must be Highest or Exact.")
@@ -199,11 +202,7 @@ def normalize_graphics(profile_name: str, value: object, profile: dict) -> dict:
     height_present = "Height" in settings
     if width_present != height_present:
         raise ValueError("Graphics Width and Height must both be set or both be omitted.")
-    if display_policy == "PreserveCurrent":
-        prohibited = {"Width", "Height", "RefreshHz", "AspectRatioMode", "Fullscreen"} & settings.keys()
-        if prohibited:
-            raise ValueError("PreserveCurrent display policy cannot set: " + ", ".join(sorted(prohibited)) + ".")
-    elif not width_present:
+    if not width_present:
         settings["Width"], settings["Height"] = (1920, 1080) if profile_name == "BrileMode" else (1280, 960)
 
     missing = GRAPHICS_REQUIRED_SETTINGS - settings.keys()
