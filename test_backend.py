@@ -79,6 +79,10 @@ class ValidationTests(unittest.TestCase):
         canonical = normalize_profile("OliMode", raw)
         self.assertEqual(canonical["LaunchWebsiteUrl"], "https://example.com/")
 
+        raw.pop("CfgDownloadUrl")
+        without_cfg_url = normalize_profile("OliMode", raw)
+        self.assertEqual(without_cfg_url["CfgDownloadUrl"], "/v1/cfg/oli.cfg")
+
     def test_profile_rejects_invalid_ranges_types_urls_and_legacy_sensitivity(self) -> None:
         invalid_mutations = [
             ("PointerSpeed", 0),

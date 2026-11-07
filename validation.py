@@ -146,7 +146,12 @@ def normalize_profile(profile_name: str, value: object, *, allow_legacy_cfg_url:
     if unknown:
         raise ValueError("Profile contains unsupported fields.")
 
-    result = {"SchemaVersion": 1, "ProfileName": profile_name, **PROFILE_DEFAULTS[profile_name]}
+    result = {
+        "SchemaVersion": 1,
+        "ProfileName": profile_name,
+        **PROFILE_DEFAULTS[profile_name],
+        "CfgDownloadUrl": f"/v1/cfg/{PROFILE_CFG_FILES[profile_name]}",
+    }
     result.update(value)
     for field, rule in PROFILE_NUMERIC_RULES.items():
         if field == "ScalingMode":
