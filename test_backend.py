@@ -75,6 +75,10 @@ class ValidationTests(unittest.TestCase):
         self.assertTrue(result["LaunchWebsiteEnabled"])
         self.assertEqual(result["LaunchWebsiteUrl"], "https://metastack.gg/")
 
+        raw["LaunchWebsiteUrl"] = "  HTTPS://Example.COM  "
+        canonical = normalize_profile("OliMode", raw)
+        self.assertEqual(canonical["LaunchWebsiteUrl"], "https://example.com/")
+
     def test_profile_rejects_invalid_ranges_types_urls_and_legacy_sensitivity(self) -> None:
         invalid_mutations = [
             ("PointerSpeed", 0),

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import re
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 
 PROFILE_CFG_FILES = {
@@ -109,17 +109,30 @@ def _canonical_cfg_url(profile_name: str, value: object, *, allow_legacy: bool) 
 
 
 def _validate_website_url(value: object) -> str:
-    if not isinstance(value, str) or not value or len(value) > 2048 or any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
+    if not isinstance(value, str):
+        raise ValueError("LaunchWebsiteUrl must be a web URL no longer than 2048 characters.")
+    value = value.strip()
+    if not value or len(value) > 2048 or any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
         raise ValueError("LaunchWebsiteUrl must be a web URL no longer than 2048 characters.")
     try:
         value.encode("utf-8")
         parsed = urlsplit(value)
-        _ = parsed.port
-    except (UnicodeEncodeError, ValueError) as error:
+        port = parsed.port
+        host = parsed.hostname
+        ascii_host = host.encode("idna").decode("ascii").lower() if host else ""
+    except (UnicodeError, ValueError) as error:
         raise ValueError("LaunchWebsiteUrl is invalid.") from error
-    if parsed.scheme.lower() not in ("http", "https") or not parsed.hostname or parsed.username is not None or parsed.password is not None:
+    scheme = parsed.scheme.lower()
+    if scheme not in ("http", "https") or not ascii_host or parsed.username is not None or parsed.password is not None:
         raise ValueError("LaunchWebsiteUrl must be an absolute HTTP or HTTPS URL without credentials.")
-    return value
+    if ":" in ascii_host:
+        ascii_host = f"[{ascii_host}]"
+    if port is not None and port != (443 if scheme == "https" else 80):
+        ascii_host += f":{port}"
+    path = quote(parsed.path or "/", safe="/%:@-._~!$&'()*+,;=")
+    query = quote(parsed.query, safe="/?%:@-._~!$&'()*+,;=")
+    fragment = quote(parsed.fragment, safe="/?%:@-._~!$&'()*+,;=")
+    return urlunsplit((scheme, ascii_host, path, query, fragment))
 
 
 def normalize_profile(profile_name: str, value: object, *, allow_legacy_cfg_url: bool = True) -> dict:
