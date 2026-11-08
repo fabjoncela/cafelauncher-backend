@@ -43,10 +43,17 @@ if [[ ! -d "$release" ]]; then
   git --git-dir="$REPOSITORY" archive "$deploy_sha" | tar --extract --directory="$stage" --no-same-owner
   chown -R root:root "$stage"
   chmod -R go-w "$stage"
+  chmod 0755 "$stage"
   mv -- "$stage" "$release"
   stage=
+else
+  # A prior interrupted/failed deployment may have left a mktemp mode-0700
+  # release directory. The service account needs search permission to chdir.
+  chmod 0755 "$release"
 fi
 [[ -f "$release/server.py" && -f "$release/github_mirror.py" ]] || fail 'release is missing required backend entry points'
+runuser -u cafelauncher -- test -r "$release/server.py" || fail 'service account cannot read the staged API source'
+runuser -u cafelauncher -- test -x "$release" || fail 'service account cannot enter the staged release directory'
 
 switch_release() {
   local target=$1
