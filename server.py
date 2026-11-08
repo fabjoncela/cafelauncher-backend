@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import hmac
 import ipaddress
 import json
@@ -292,6 +293,47 @@ class ApiHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urlsplit(self.path)
         parts = [unquote(part) for part in parsed.path.strip("/").split("/") if part]
+
+        if not parts:
+            try:
+                with _connect() as connection:
+                    profile_count = connection.execute(
+                        "SELECT COUNT(DISTINCT profile_name) FROM profile_revisions"
+                    ).fetchone()[0]
+                    mirror = connection.execute(
+                        "SELECT generation, mirrored_generation, last_success_utc "
+                        "FROM github_mirror_state WHERE singleton = 1"
+                    ).fetchone()
+                    releases = connection.execute("SELECT version FROM releases").fetchall()
+            except sqlite3.Error:
+                self._error(503, "storage_unavailable", "Backend storage is unavailable.")
+                return
+            mirror_ready = mirror is not None and mirror["last_success_utc"] is not None
+            mirror_current = mirror_ready and mirror["generation"] == mirror["mirrored_generation"]
+            mirror_status = "Up to date" if mirror_current else "Waiting to sync"
+            latest_release = max(
+                (row["version"] for row in releases), key=_launcher_version_key, default=None
+            )
+            body = f"""<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>CafeLauncher Backend</title></head>
+<body>
+<h1>CafeLauncher Backend</h1>
+<p><strong>API:</strong> Running (version {html.escape(APP_VERSION)})</p>
+<p><strong>Profiles:</strong> {profile_count}</p>
+<p><strong>GitHub mirror data:</strong> {mirror_status}</p>
+<p><strong>Latest launcher release:</strong> {html.escape(latest_release) if latest_release else "None published"}</p>
+<p><a href="/v1/health">Health JSON</a> · <a href="https://github.com/fabjoncela/cafelauncher-backend-mirror/blob/main/mirror-manifest.json">Mirror manifest</a></p>
+</body>
+</html>
+""".encode("utf-8")
+            self._send_bytes(
+                200,
+                body,
+                "text/html; charset=utf-8",
+                headers={"Content-Security-Policy": "default-src 'none'; base-uri 'none'; form-action 'none'", "Referrer-Policy": "no-referrer"},
+            )
+            return
 
         if parts == ["v1", "health"]:
             try:
