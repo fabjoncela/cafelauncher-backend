@@ -13,7 +13,8 @@ The prototype provides anonymous read endpoints for profile bundles and release 
 - `github_mirror.py` publishes an atomic public GitHub snapshot and keeps a durable SQLite generation marker for restart-safe retries.
 - No CafeLauncher client integration has been made.
 - The `/v1` API is not wire-compatible with GitHub REST. CafeLauncher still calls GitHub Contents, commits/compare/history, raw CFG/module, and updater endpoints directly; a client adapter and opt-in migration are required before this backend can replace GitHub.
-- Nothing has been deployed to the Ubuntu server or exposed with Tailscale Funnel.
+- The backend is deployed on the Ubuntu server as two `systemd` services, with SQLite/assets under `/var/lib/cafelauncher-backend` and the API bound to `127.0.0.1:8090`. Its public HTTPS path is provided by the existing Tailscale Funnel route; see [`deploy/DEPLOYMENT.md`](deploy/DEPLOYMENT.md).
+- `.github/workflows/backend-ci-deploy.yml` runs tests on Python 3.10 and 3.14, then deploys successful `main` pushes through a dedicated server runner. The workflow and rollback script are prepared; one-time runner and server bootstrap setup is still required before automatic deployment can run.
 - The API contract is provisional and must be wired into CafeLauncher before these endpoints affect café PCs.
 
 ## Run locally on Windows
@@ -101,7 +102,7 @@ Launcher release versions must use CafeLauncher's four-part dotted `CAFE_RELEASE
 
 Launcher release uploads must be between 10,000 and 1,000,000 bytes, matching the current CafeLauncher updater's metadata validation. The graphics module is limited to 8 MiB.
 
-`publish.py` uploads a launcher/module release or helper binary and checks the server-returned hashes. It can be used later from a trusted local machine or a CI job; no GitHub Actions workflow has been changed.
+`publish.py` uploads a launcher/module release or helper binary and checks the server-returned hashes. It can be used from a trusted local machine or a separate release workflow; the backend CI workflow does not publish launcher artifacts.
 
 Example commands for a future deployment:
 
@@ -143,9 +144,9 @@ Pause publishing while the backup runs to keep the database and asset snapshot a
 
 ## Tailscale Funnel deployment shape
 
-For a later Ubuntu deployment, run this service bound to loopback and expose only its local port through Funnel. CaféLauncher clients will use the resulting HTTPS `*.ts.net` URL; the clients will not need to join the tailnet. Do not bind the application to `0.0.0.0` when relying on Funnel as the public entry point.
+The Ubuntu service is bound to loopback and exposed through Funnel. CaféLauncher clients can use the HTTPS `*.ts.net` URL without joining the tailnet. Do not bind the application to `0.0.0.0` when relying on Funnel as the public entry point.
 
-Use separate `systemd` services for the API and mirror worker, with secrets in root-readable environment files outside the project folder. The step-by-step Ubuntu checklist is in [`deploy/DEPLOYMENT.md`](deploy/DEPLOYMENT.md). Back up the SQLite database plus `data/releases/` and `data/tools/` together with `backup.py`. Deployment and Funnel configuration have not been performed.
+The API and mirror worker use separate `systemd` services, with secrets in root-readable environment files outside the project folder. The step-by-step Ubuntu checklist and pending automated-deployment bootstrap are in [`deploy/DEPLOYMENT.md`](deploy/DEPLOYMENT.md). Back up the SQLite database plus `data/releases/` and `data/tools/` together with `backup.py`.
 
 ## GitHub fallback mirror
 
