@@ -86,6 +86,7 @@ tar -C "$APP_ROOT" \
 [[ -f "$stage/server.py" && -f "$stage/github_mirror.py" ]] || fail 'source snapshot is incomplete'
 chown -R root:root "$stage"
 chmod -R go-w "$stage"
+chmod 0755 "$stage"
 mv -- "$stage" "$release"
 stage=
 
