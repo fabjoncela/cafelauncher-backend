@@ -7,12 +7,12 @@ After=network-online.target
 Type=simple
 User=cafelauncher
 Group=cafelauncher
-WorkingDirectory=/opt/cafelauncher-backend
+WorkingDirectory=/opt/cafelauncher-backend/current
 EnvironmentFile=/etc/cafelauncher-backend.env
 Environment=CAFELAUNCHER_DATA_DIR=/var/lib/cafelauncher-backend
 Environment=CAFELAUNCHER_BIND=127.0.0.1
 Environment=CAFELAUNCHER_PORT=8090
-ExecStart=/usr/bin/python3 /opt/cafelauncher-backend/server.py
+ExecStart=/usr/bin/python3 /opt/cafelauncher-backend/current/server.py
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

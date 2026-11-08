@@ -111,6 +111,24 @@ Wait until `generation` equals `mirrored_generation`, then verify the public `mi
 - Run `backup.py`, then verify that the database, `releases/`, and `tools/` are included in the backup. Keep the backup private.
 - Do not point CafeLauncher clients at this backend until their opt-in adapter, GitHub read fallback, and local pending-write retry have been implemented and tested.
 
-## Updating the backend later
+## Automated tests and deployment
 
-Commit the new backend revision, create and transfer another Git bundle, then fast-forward the server checkout and restart both services. The database and published assets stay under `/var/lib/cafelauncher-backend` and must not be replaced by source updates.
+`.github/workflows/backend-ci-deploy.yml` runs the standard-library test suite on Python 3.10 and 3.14 for pull requests and pushes to `main`. A successful push to `main` then deploys that exact commit. Pull requests never run a job on the server.
+
+The deploy job needs a repository-scoped self-hosted GitHub Actions runner on this Ubuntu host with the label `cafe-backend-deploy`. It should run as a dedicated unprivileged `cafelauncher-deploy` account, not as root, and should be registered only to `fabjoncela/cafelauncher-backend`. Do not register it at organization scope or allow pull-request jobs onto it. GitHub warns against using self-hosted runners for public-repository pull requests because untrusted code could compromise the runner; this workflow keeps all PR tests on GitHub-hosted runners and gates deployment to trusted `main` pushes.
+
+### One-time server setup
+
+The following setup is still required before automatic deployment can run. It changes only the two CafeLauncher systemd units and adds a narrowly scoped runner account and deploy command. Do not remove or copy `/var/lib/cafelauncher-backend`, the API/mirror environment files, or any existing system data.
+
+1. Confirm the existing source at `/opt/cafelauncher-backend` has no `data/` directory or `.env`; stop if either exists. Create `/opt/cafelauncher-backend/releases/bootstrap-current`, then copy the existing source files there while excluding `.git`, `releases`, `current`, and `.deploy-repository.git`. Make the snapshot root-owned and readable by the `cafelauncher` service account. Point `/opt/cafelauncher-backend/current` at `releases/bootstrap-current`.
+2. Install the two unit files from this repository into `/etc/systemd/system/`. They use `/opt/cafelauncher-backend/current`; data and secret paths remain unchanged. Install `deploy/cafelauncher-backend-deploy` as root-owned `/usr/local/sbin/cafelauncher-backend-deploy` mode `0755`.
+3. Create the local `cafelauncher-deploy` account and install a sudoers rule allowing that account to run only `/usr/local/sbin/cafelauncher-backend-deploy` as root, without a password. Validate the rule with `visudo -cf` before reloading systemd or restarting anything.
+4. Reload systemd, restart the API, check `http://127.0.0.1:8090/v1/health`, then restart the mirror and confirm it is active. If any check fails, point `current` back to the original `/opt/cafelauncher-backend` source snapshot, restore the previous unit files, and restart the two CafeLauncher services.
+5. Install and register a repository-scoped GitHub Actions runner using the commands GitHub generates under this repository's **Settings → Actions → Runners**. Run its service as `cafelauncher-deploy`; assign label `cafe-backend-deploy`. Keep the short-lived runner registration token private and out of shell history where possible.
+
+The deploy script accepts exactly one commit SHA on standard input, fetches public `main`, and refuses commits outside its history. It extracts code into a versioned, root-owned directory, atomically switches `current`, restarts the API, waits for the health endpoint, then restarts and checks the mirror unit. If verification fails, it restores the previous `current` symlink and restarts both units. It does not write to the database, assets, or environment files. Keep the previous release directories until a later cleanup policy is reviewed.
+
+After setup, the GitHub Actions `production` environment and runner label must be available. On each successful `main` push, GitHub Actions tests first; the server runner receives only the tested commit SHA. A test failure prevents deployment. `workflow_dispatch` works only when run from `main` and also passes through the same tests.
+
+Until this one-time setup is complete, pushes still run CI but the deploy job will remain queued waiting for the dedicated runner. The database and published assets stay under `/var/lib/cafelauncher-backend` and must not be replaced by source updates.

@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly APP_ROOT=/opt/cafelauncher-backend
+readonly RELEASES="$APP_ROOT/releases"
+readonly REPOSITORY="$APP_ROOT/.deploy-repository.git"
+readonly REPOSITORY_URL=https://github.com/fabjoncela/cafelauncher-backend.git
+readonly CURRENT="$APP_ROOT/current"
+readonly API_UNIT=cafelauncher-backend.service
+readonly MIRROR_UNIT=cafelauncher-github-mirror.service
+
+log() { printf '[cafelauncher-deploy] %s\n' "$*" >&2; }
+fail() { log "ERROR: $*"; exit 1; }
+
+exec 9>/run/lock/cafelauncher-backend-deploy.lock
+flock -n 9 || fail 'another backend deployment is already running'
+
+IFS= read -r deploy_sha || fail 'expected the commit SHA on stdin'
+[[ "$deploy_sha" =~ ^[0-9a-f]{40}$ ]] || fail 'commit SHA must be 40 lowercase hexadecimal characters'
+[[ -z "$(cat)" ]] || fail 'expected exactly one line of input'
+
+[[ -d "$APP_ROOT" && -d "$RELEASES" ]] || fail 'deployment directories are not bootstrapped'
+[[ -L "$CURRENT" ]] || fail 'current release link is missing'
+old_release=$(readlink "$CURRENT")
+old_resolved=$(readlink -f "$CURRENT")
+[[ "$old_resolved" == "$RELEASES"/* && -d "$old_resolved" ]] || fail 'current release is outside the managed releases directory'
+
+install -d -o root -g root -m 0755 "$RELEASES"
+if [[ ! -d "$REPOSITORY" ]]; then
+  git init --bare "$REPOSITORY" >/dev/null
+  git --git-dir="$REPOSITORY" remote add origin "$REPOSITORY_URL"
+fi
+[[ "$(git --git-dir="$REPOSITORY" remote get-url origin)" == "$REPOSITORY_URL" ]] || fail 'deployment repository origin does not match the expected public repository'
+git --git-dir="$REPOSITORY" fetch --quiet --prune origin '+refs/heads/main:refs/remotes/origin/main'
+git --git-dir="$REPOSITORY" cat-file -e "$deploy_sha^{commit}" 2>/dev/null || fail 'requested commit is not present in the fetched repository'
+git --git-dir="$REPOSITORY" merge-base --is-ancestor "$deploy_sha" refs/remotes/origin/main || fail 'requested commit is not reachable from origin/main'
+
+readonly release="$RELEASES/$deploy_sha"
+if [[ ! -d "$release" ]]; then
+  stage=$(mktemp -d "$RELEASES/.stage-${deploy_sha}.XXXXXX")
+  cleanup_stage() { [[ -z "${stage:-}" ]] || rm -rf -- "$stage"; }
+  trap cleanup_stage EXIT
+  git --git-dir="$REPOSITORY" archive "$deploy_sha" | tar --extract --directory="$stage" --no-same-owner
+  chown -R root:root "$stage"
+  chmod -R go-w "$stage"
+  mv -- "$stage" "$release"
+  stage=
+fi
+[[ -f "$release/server.py" && -f "$release/github_mirror.py" ]] || fail 'release is missing required backend entry points'
+
+switch_release() {
+  local target=$1
+  python3 - "$CURRENT" "$target" <<'PY'
+import os
+import sys
+
+link, target = sys.argv[1:]
+temporary = f"{link}.next.{os.getpid()}"
+try:
+    os.symlink(target, temporary)
+    os.replace(temporary, link)
+finally:
+    try:
+        os.unlink(temporary)
+    except FileNotFoundError:
+        pass
+PY
+}
+
+switched=0
+rollback_on_error() {
+  local result=$?
+  trap - ERR INT TERM HUP
+  if (( switched )); then
+    log 'verification failed; restoring the previous release'
+    if switch_release "$old_release" && systemctl restart "$API_UNIT" "$MIRROR_UNIT"; then
+      if verify_api && systemctl is-active --quiet "$MIRROR_UNIT"; then
+        log 'rollback verified'
+      else
+        log 'rollback restart completed, but post-rollback verification needs inspection'
+      fi
+    else
+      log 'rollback command failed; inspect both systemd services'
+    fi
+  fi
+  exit "$result"
+}
+
+verify_api() {
+  python3 - <<'PY'
+import json
+import time
+from urllib.request import urlopen
+
+for _ in range(30):
+    try:
+        with urlopen("http://127.0.0.1:8090/v1/health", timeout=3) as response:
+            payload = json.load(response)
+            if response.status == 200 and payload.get("status") == "ok":
+                raise SystemExit(0)
+    except Exception:
+        time.sleep(2)
+raise SystemExit("API health check did not pass")
+PY
+}
+
+trap rollback_on_error ERR
+trap 'rollback_on_error 130' INT
+trap 'rollback_on_error 143' TERM HUP
+log "deploying ${deploy_sha}"
+switch_release "$release"
+switched=1
+systemctl restart "$API_UNIT"
+verify_api
+systemctl restart "$MIRROR_UNIT"
+systemctl is-active --quiet "$MIRROR_UNIT"
+switched=0
+trap - ERR INT TERM HUP
+log "deployment ${deploy_sha} passed API health and mirror service checks"
