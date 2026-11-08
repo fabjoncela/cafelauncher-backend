@@ -14,7 +14,7 @@ The prototype provides anonymous read endpoints for profile bundles and release 
 - No CafeLauncher client integration has been made.
 - The `/v1` API is not wire-compatible with GitHub REST. CafeLauncher still calls GitHub Contents, commits/compare/history, raw CFG/module, and updater endpoints directly; a client adapter and opt-in migration are required before this backend can replace GitHub.
 - The backend is deployed on the Ubuntu server as two `systemd` services, with SQLite/assets under `/var/lib/cafelauncher-backend` and the API bound to `127.0.0.1:8090`. Its public HTTPS path is provided by the existing Tailscale Funnel route; see [`deploy/DEPLOYMENT.md`](deploy/DEPLOYMENT.md).
-- `.github/workflows/backend-ci-deploy.yml` runs tests on Python 3.10 and 3.14, then deploys successful `main` pushes through a dedicated server runner. The workflow and rollback script are prepared; one-time runner and server bootstrap setup is still required before automatic deployment can run.
+- `.github/workflows/backend-ci-deploy.yml` runs tests on Python 3.10 and 3.14, then deploys successful `main` pushes through the dedicated server runner. The runner and server bootstrap are active; the first successful automated deployment completed at commit `161f633`.
 - The API contract is provisional and must be wired into CafeLauncher before these endpoints affect café PCs.
 
 ## Run locally on Windows
