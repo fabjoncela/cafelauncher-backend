@@ -381,6 +381,80 @@ class ApiHandler(BaseHTTPRequestHandler):
             self._send_json(200, {"status": "ok", "version": APP_VERSION}, cache_control="no-store")
             return
 
+        if len(parts) == 4 and parts[:2] == ["v1", "profiles"] and parts[3] == "history":
+            profile_name = parts[2]
+            if not PROFILE_NAME.fullmatch(profile_name):
+                self._error(400, "invalid_profile_name", "Profile name is invalid.")
+                return
+            query = parse_qs(parsed.query)
+            try:
+                limit = int(query.get("limit", ["20"])[0])
+                before_revision = int(query["beforeRevision"][0]) if "beforeRevision" in query else None
+            except (ValueError, IndexError):
+                self._error(400, "invalid_history_cursor", "History limit and revision cursor must be integers.")
+                return
+            if limit < 1 or limit > 50 or (
+                before_revision is not None and not 1 <= before_revision <= (1 << 63) - 1
+            ):
+                self._error(400, "invalid_history_cursor", "History limit must be 1–50 and revision cursor must be positive.")
+                return
+            with _connect() as connection:
+                if before_revision is None:
+                    rows = connection.execute(
+                        "SELECT revision, created_utc FROM profile_revisions "
+                        "WHERE profile_name = ? ORDER BY revision DESC LIMIT ?",
+                        (profile_name, limit + 1),
+                    ).fetchall()
+                else:
+                    rows = connection.execute(
+                        "SELECT revision, created_utc FROM profile_revisions "
+                        "WHERE profile_name = ? AND revision < ? ORDER BY revision DESC LIMIT ?",
+                        (profile_name, before_revision, limit + 1),
+                    ).fetchall()
+            has_more = len(rows) > limit
+            page = rows[:limit]
+            self._send_json(
+                200,
+                {
+                    "profile": profile_name,
+                    "revisions": [{"revision": row["revision"], "createdUtc": row["created_utc"]} for row in page],
+                    "hasMore": has_more,
+                    "nextBeforeRevision": page[-1]["revision"] if has_more and page else None,
+                },
+                cache_control="no-cache",
+            )
+            return
+
+        if len(parts) == 5 and parts[:2] == ["v1", "profiles"] and parts[3] == "history":
+            profile_name = parts[2]
+            if not PROFILE_NAME.fullmatch(profile_name):
+                self._error(400, "invalid_profile_name", "Profile name is invalid.")
+                return
+            try:
+                revision = int(parts[4])
+            except ValueError:
+                self._error(400, "invalid_revision", "Revision must be a positive integer.")
+                return
+            if not 1 <= revision <= (1 << 63) - 1:
+                self._error(400, "invalid_revision", "Revision must be a positive integer.")
+                return
+            row = self._revision_row(profile_name, revision)
+            if row is None:
+                self._error(404, "revision_not_found", "Profile revision was not found.")
+                return
+            self._send_json(
+                200,
+                {
+                    "profile": json.loads(row["profile_json"]),
+                    "graphics": json.loads(row["graphics_json"]),
+                    "cfg": row["cfg_text"],
+                    "revision": row["revision"],
+                    "createdUtc": row["created_utc"],
+                },
+                cache_control="no-cache",
+            )
+            return
+
         if len(parts) == 3 and parts[0:2] in (["v1", "profiles"], ["v1", "graphics"], ["v1", "cfg"]):
             resource_name = parts[2]
             if parts[1] == "cfg":

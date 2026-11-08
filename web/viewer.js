@@ -10,7 +10,12 @@ const graphicsSettings = document.querySelector("#graphics-settings");
 const cfgTitle = document.querySelector("#cfg-title");
 const cfgMeta = document.querySelector("#cfg-meta");
 const cfgViewer = document.querySelector("#cfg-viewer");
-const graphicsHistory = document.querySelector("#graphics-history");
+const profileHistory = document.querySelector("#profile-history");
+const loadHistoryButton = document.querySelector("#load-history-button");
+const loadMoreHistoryButton = document.querySelector("#load-more-history");
+let currentBundle = null;
+let historyCursor = null;
+let historyLoaded = false;
 
 function showMessage(target, message) {
   target.replaceChildren();
@@ -118,29 +123,121 @@ function formatDate(value) {
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
 }
 
-function renderHistory(payload) {
-  graphicsHistory.replaceChildren();
+function appendHistoryEntries(payload, profileName) {
   const revisions = Array.isArray(payload?.revisions) ? payload.revisions : [];
-  if (!revisions.length) {
-    showMessage(graphicsHistory, "No graphics history is available yet.");
-    return;
+  if (!historyLoaded) profileHistory.replaceChildren();
+  if (!revisions.length && !historyLoaded) {
+    showMessage(profileHistory, "No saved profile revisions are available yet.");
   }
   for (const entry of revisions) {
     const details = document.createElement("details");
     details.className = "history-entry";
     const summary = document.createElement("summary");
     summary.textContent = `Revision ${entry.revision} · ${formatDate(entry.createdUtc)}`;
-    const tableWrap = document.createElement("div");
-    tableWrap.className = "table-wrap";
-    const historicalGraphics = { ...(entry.graphics || {}) };
-    const historicalSettings = historicalGraphics.Settings || {};
-    delete historicalGraphics.Settings;
-    delete historicalGraphics.SchemaVersion;
-    delete historicalGraphics.ProfileName;
-    renderTable(tableWrap, { ...historicalGraphics, ...historicalSettings });
-    details.append(summary, tableWrap);
-    graphicsHistory.append(details);
+    const content = document.createElement("div");
+    content.className = "history-snapshot";
+    const loading = document.createElement("p");
+    loading.className = "muted";
+    loading.textContent = "Open this revision to load its saved values.";
+    content.append(loading);
+    details.append(summary, content);
+    details.addEventListener("toggle", async () => {
+      if (!details.open || details.dataset.loaded || details.dataset.loading) return;
+      details.dataset.loading = "true";
+      showMessage(content, "Loading this saved revision…");
+      try {
+        const response = await fetch(`/v1/profiles/${encodeURIComponent(profileName)}/history/${entry.revision}`, { cache: "no-store", headers: { Accept: "application/json" } });
+        const snapshot = await readResponse(response, "Profile history");
+        if (profileSelect.value !== profileName || !currentBundle || !profileHistory.contains(details)) return;
+        renderHistoricalBundle(content, snapshot);
+        details.dataset.loaded = "true";
+      } catch (error) {
+        showMessage(content, `Could not load revision: ${error.message}`);
+      } finally {
+        delete details.dataset.loading;
+      }
+    });
+    profileHistory.append(details);
   }
+  historyLoaded = true;
+  historyCursor = payload?.hasMore ? payload.nextBeforeRevision : null;
+  loadMoreHistoryButton.hidden = !historyCursor;
+  loadHistoryButton.textContent = "Reload history";
+}
+
+function renderHistoricalBundle(target, snapshot) {
+  target.replaceChildren();
+  const currentRevision = currentBundle.revision;
+  const heading = document.createElement("p");
+  heading.className = "small-meta snapshot-meta";
+  heading.textContent = `Saved ${formatDate(snapshot.createdUtc)} · revision ${snapshot.revision} · current revision ${currentRevision}`;
+  target.append(heading);
+  const currentValues = {
+    ...Object.fromEntries(Object.entries(currentBundle.profile || {}).map(([key, value]) => [`Profile · ${readableName(key)}`, value])),
+    ...Object.fromEntries(Object.entries(currentBundle.graphics || {}).filter(([key]) => !["Settings", "SchemaVersion", "ProfileName"].includes(key)).map(([key, value]) => [`Graphics · ${readableName(key)}`, value])),
+    ...Object.fromEntries(Object.entries(currentBundle.graphics?.Settings || {}).map(([key, value]) => [`Graphics · ${readableName(key)}`, value])),
+  };
+  const historicalValues = {
+    ...Object.fromEntries(Object.entries(snapshot.profile || {}).map(([key, value]) => [`Profile · ${readableName(key)}`, value])),
+    ...Object.fromEntries(Object.entries(snapshot.graphics || {}).filter(([key]) => !["Settings", "SchemaVersion", "ProfileName"].includes(key)).map(([key, value]) => [`Graphics · ${readableName(key)}`, value])),
+    ...Object.fromEntries(Object.entries(snapshot.graphics?.Settings || {}).map(([key, value]) => [`Graphics · ${readableName(key)}`, value])),
+  };
+  const changedKeys = [...new Set([...Object.keys(currentValues), ...Object.keys(historicalValues)])]
+    .filter((key) => JSON.stringify(currentValues[key]) !== JSON.stringify(historicalValues[key]));
+  const compareHeading = document.createElement("h3");
+  compareHeading.className = "snapshot-heading";
+  compareHeading.textContent = "Changes vs current";
+  target.append(compareHeading);
+  if (changedKeys.length) {
+    const table = document.createElement("table");
+    table.className = "settings-table comparison-table";
+    const body = document.createElement("tbody");
+    for (const key of changedKeys) {
+      const row = document.createElement("tr");
+      const label = document.createElement("th");
+      label.scope = "row";
+      label.textContent = key;
+      const current = document.createElement("td");
+      current.textContent = `Current: ${readableValue(currentValues[key])}`;
+      const saved = document.createElement("td");
+      saved.textContent = `Saved: ${readableValue(historicalValues[key])}`;
+      row.append(label, current, saved);
+      body.append(row);
+    }
+    table.append(body);
+    target.append(table);
+  } else {
+    const unchanged = document.createElement("p");
+    unchanged.className = "muted";
+    unchanged.textContent = "Profile and graphics settings match the current revision.";
+    target.append(unchanged);
+  }
+  const cfgChanged = String(snapshot.cfg ?? "") !== String(currentBundle.cfg ?? "");
+  const cfgStatus = document.createElement("p");
+  cfgStatus.className = cfgChanged ? "history-change-status" : "muted";
+  cfgStatus.textContent = cfgChanged ? "The saved CFG differs from the current CFG; the saved text is shown below." : "The CFG matches the current revision.";
+  target.append(cfgStatus);
+  const sections = [
+    ["Profile settings", snapshot.profile || {}, ["SchemaVersion", "ProfileName", "CfgDownloadUrl"]],
+    ["Graphics policy", Object.fromEntries(Object.entries(snapshot.graphics || {}).filter(([key]) => !["Settings", "SchemaVersion", "ProfileName"].includes(key))), []],
+    ["Graphics values", snapshot.graphics?.Settings || {}, []],
+  ];
+  for (const [title, values, omitted] of sections) {
+    const heading = document.createElement("h3");
+    heading.className = "snapshot-heading";
+    heading.textContent = title;
+    const table = document.createElement("div");
+    table.className = "table-wrap";
+    renderTable(table, values, omitted);
+    target.append(heading, table);
+  }
+  const cfgHeading = document.createElement("h3");
+  cfgHeading.className = "snapshot-heading";
+  cfgHeading.textContent = "Saved CFG";
+  const cfg = document.createElement("pre");
+  cfg.className = "history-cfg";
+  cfg.textContent = String(snapshot.cfg ?? "");
+  target.append(cfgHeading, cfg);
 }
 
 async function readResponse(response, label, asText = false) {
@@ -158,7 +255,12 @@ async function loadProfile() {
   loadStatus.dataset.state = "loading";
   loadStatus.textContent = `Loading ${profileName} from the backend…`;
   revisionBanner.hidden = true;
-  for (const target of [profileSettings, graphicsPolicy, graphicsSettings, cfgViewer, graphicsHistory]) {
+  currentBundle = null;
+  historyLoaded = false;
+  historyCursor = null;
+  loadMoreHistoryButton.hidden = true;
+  loadHistoryButton.textContent = "Load history";
+  for (const target of [profileSettings, graphicsPolicy, graphicsSettings, cfgViewer, profileHistory]) {
     showMessage(target, "Loading…");
   }
   cfgTitle.textContent = `${cfgName} CFG`;
@@ -184,6 +286,7 @@ async function loadProfile() {
       }
     }
     if (!bundle) throw new Error("The profile changed while it was loading. Press Refresh to try again.");
+    currentBundle = bundle;
 
     renderTable(profileSettings, bundle.profile, ["SchemaVersion", "ProfileName", "CfgDownloadUrl"]);
     const policy = Object.fromEntries(Object.entries(bundle.graphics).filter(([key]) => !["Settings", "SchemaVersion", "ProfileName"].includes(key)));
@@ -193,12 +296,7 @@ async function loadProfile() {
     revisionBanner.textContent = `${profileName} · backend revision ${bundle.revision}`;
     revisionBanner.hidden = false;
 
-    try {
-      const response = await fetch(`/v1/graphics/${encodeURIComponent(profileName)}/history?limit=20`, { cache: "no-store", headers: { Accept: "application/json" } });
-      renderHistory(await readResponse(response, "Graphics history"));
-    } catch (error) {
-      showMessage(graphicsHistory, `Could not load graphics history: ${error.message}`);
-    }
+    showMessage(profileHistory, "Choose “Load history” to view saved revisions.");
     loadStatus.dataset.state = "ok";
     loadStatus.textContent = `Loaded from the backend · ${new Date().toLocaleTimeString()}`;
   } catch (error) {
@@ -208,13 +306,45 @@ async function loadProfile() {
     showMessage(graphicsPolicy, "No graphics data loaded.");
     showMessage(graphicsSettings, "No graphics data loaded.");
     showMessage(cfgViewer, "No CFG data loaded.");
-    showMessage(graphicsHistory, "No history data loaded.");
+    showMessage(profileHistory, "Load the current profile before viewing history.");
   } finally {
     refreshButton.disabled = false;
     profileSelect.disabled = false;
   }
 }
 
+async function loadHistory(beforeRevision = null) {
+  if (!currentBundle || loadHistoryButton.disabled) return;
+  const profileName = profileSelect.value;
+  loadHistoryButton.disabled = true;
+  loadMoreHistoryButton.disabled = true;
+  if (!beforeRevision) {
+    historyLoaded = false;
+    historyCursor = null;
+  }
+  try {
+    const query = new URLSearchParams({ limit: "20" });
+    if (beforeRevision) query.set("beforeRevision", String(beforeRevision));
+    const response = await fetch(`/v1/profiles/${encodeURIComponent(profileName)}/history?${query}`, { cache: "no-store", headers: { Accept: "application/json" } });
+    const payload = await readResponse(response, "Profile history");
+    if (profileSelect.value !== profileName || !currentBundle) return;
+    appendHistoryEntries(payload, profileName);
+  } catch (error) {
+    if (!historyLoaded) showMessage(profileHistory, `Could not load profile history: ${error.message}`);
+    else {
+      const message = document.createElement("p");
+      message.className = "muted";
+      message.textContent = `Could not load older revisions: ${error.message}`;
+      profileHistory.append(message);
+    }
+  } finally {
+    loadHistoryButton.disabled = false;
+    loadMoreHistoryButton.disabled = false;
+  }
+}
+
 refreshButton.addEventListener("click", loadProfile);
 profileSelect.addEventListener("change", loadProfile);
+loadHistoryButton.addEventListener("click", () => loadHistory());
+loadMoreHistoryButton.addEventListener("click", () => loadHistory(historyCursor));
 loadProfile();

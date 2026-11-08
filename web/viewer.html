@@ -53,10 +53,13 @@
 
       <section class="panel history-panel">
         <div class="panel-heading">
-          <div><p class="eyebrow">BACKEND HISTORY</p><h2>Graphics versions</h2></div>
+          <div><p class="eyebrow">BACKEND HISTORY</p><h2>Profile saves</h2></div>
           <span class="small-meta">Most recent first</span>
         </div>
-        <div id="graphics-history" class="history-list"><p class="muted">Waiting for data…</p></div>
+        <p class="muted history-description">Each saved revision keeps that profile’s settings, graphics settings, and CFG together.</p>
+        <button id="load-history-button" type="button">Load history</button>
+        <div id="profile-history" class="history-list"><p class="muted">Choose “Load history” to view saved revisions.</p></div>
+        <button id="load-more-history" type="button" hidden>Load older revisions</button>
       </section>
     </div>
   </main>

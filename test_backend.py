@@ -362,6 +362,8 @@ class ApiTests(unittest.TestCase):
         self.assertIn("default-src 'none'", headers["Content-Security-Policy"])
         self.assertIn(b'data-cfg="fab.cfg">FabMode</option>', page)
         self.assertIn(b'data-cfg="prov.cfg">Provmode</option>', page)
+        self.assertIn(b">Profile saves<", page)
+        self.assertIn(b'id="load-history-button"', page)
 
         for path, expected_type in (("/viewer.css", "text/css"), ("/viewer.js", "text/javascript")):
             with self.subTest(path=path):
@@ -369,6 +371,9 @@ class ApiTests(unittest.TestCase):
                 self.assertEqual(status, 200)
                 self.assertIn(expected_type, headers["Content-Type"])
                 self.assertTrue(body)
+                if path == "/viewer.js":
+                    self.assertIn(b"/v1/profiles/${encodeURIComponent(profileName)}/history?", body)
+                    self.assertIn(b"Changes vs current", body)
 
     def test_health_reports_database_unavailable(self) -> None:
         with patch.object(server, "_connect", side_effect=sqlite3.OperationalError("simulated storage outage")):
@@ -466,6 +471,60 @@ class ApiTests(unittest.TestCase):
             _, files = github_mirror.build_snapshot()
         mirrored_history = json.loads(files["history/graphics/FabMode.json"])["revisions"]
         self.assertEqual([entry["revision"] for entry in mirrored_history], [4, 1])
+
+    def test_profile_history_lists_every_bundle_revision_and_returns_complete_snapshot(self) -> None:
+        sync_token = os.environ["CAFELAUNCHER_SYNC_TOKEN"]
+        initial_profile = profile_payload()
+        status, _, _ = self.put_bundle(0, token=sync_token, profile=initial_profile)
+        self.assertEqual(status, 200)
+
+        changed_profile = profile_payload()
+        changed_profile["PointerSpeed"] = 11
+        status, _, _ = self.put_bundle(1, token=sync_token, profile=changed_profile)
+        self.assertEqual(status, 200)
+
+        cfg = 'sensitivity "1.3"\nbind "SPACE" "+jump"\n'
+        status, _, _ = self.put_bundle(2, token=sync_token, profile=changed_profile, cfg=cfg)
+        self.assertEqual(status, 200)
+
+        changed_graphics = graphics_payload()
+        changed_graphics["Settings"]["MSAASamples"] = 4
+        status, _, _ = self.put_bundle(3, token=sync_token, profile=changed_profile, graphics=changed_graphics, cfg=cfg)
+        self.assertEqual(status, 200)
+
+        status, _, body = self.request("/v1/profiles/FabMode/history?limit=2")
+        self.assertEqual(status, 200)
+        history = json.loads(body)
+        self.assertEqual([entry["revision"] for entry in history["revisions"]], [4, 3])
+        self.assertTrue(history["hasMore"])
+        self.assertEqual(history["nextBeforeRevision"], 3)
+
+        status, _, body = self.request("/v1/profiles/FabMode/history?limit=2&beforeRevision=3")
+        self.assertEqual(status, 200)
+        older = json.loads(body)
+        self.assertEqual([entry["revision"] for entry in older["revisions"]], [2, 1])
+        self.assertFalse(older["hasMore"])
+
+        status, _, body = self.request("/v1/profiles/FabMode/history/3")
+        self.assertEqual(status, 200)
+        snapshot = json.loads(body)
+        self.assertEqual(snapshot["revision"], 3)
+        self.assertEqual(snapshot["profile"], changed_profile)
+        self.assertEqual(snapshot["graphics"], graphics_payload())
+        self.assertEqual(snapshot["cfg"], cfg)
+        self.assertTrue(snapshot["createdUtc"])
+
+        status, _, body = self.request("/v1/profiles/FabMode/history/99")
+        self.assertEqual(status, 404)
+        self.assertEqual(json.loads(body)["error"], "revision_not_found")
+
+        status, _, body = self.request("/v1/profiles/FabMode/history?limit=0")
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(body)["error"], "invalid_history_cursor")
+
+        status, _, body = self.request("/v1/profiles/FabMode/history/not-a-number")
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(body)["error"], "invalid_revision")
 
     def test_api_rejects_invalid_profile_graphics_and_cfg(self) -> None:
         sync_token = os.environ["CAFELAUNCHER_SYNC_TOKEN"]

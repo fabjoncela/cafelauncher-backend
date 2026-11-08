@@ -2,17 +2,17 @@
 
 This is a standalone backend project in its own folder. It does not modify or import code into `ProjectCafe`.
 
-The prototype provides anonymous read endpoints for profile bundles and release assets, a bearer-token-protected profile sync endpoint, graphics revision history, and a separate token-protected release publishing path. It uses Python's standard library and SQLite; no package installation is needed.
+The prototype provides anonymous read endpoints for profile bundles and release assets, a bearer-token-protected profile sync endpoint, complete profile-bundle revision history, and a separate token-protected release publishing path. It uses Python's standard library and SQLite; no package installation is needed.
 
 ## Current status
 
 - API prototype implemented in `server.py`.
 - Validation rules mirrored from the current CafeLauncher source for profile fields, graphics values/policies, CFG sensitivity, CFG URL migration, and website URLs.
 - `import_repository.py` validates and imports the six checked-in profile/graphics/CFG bundles into the local SQLite database. The existing profile CFG URLs are rewritten to `/v1/cfg/{file}` routes.
-- Twenty standard-library unit and HTTP integration tests cover validation, import, CFG serving, backup, sync conflicts/history, publishing, asset integrity, and GitHub mirror ref-conflict/restart recovery.
+- Twenty-four standard-library unit and HTTP integration tests cover validation, import, CFG serving, backup, sync conflicts/history, publishing, asset integrity, and GitHub mirror ref-conflict/restart recovery.
 - `github_mirror.py` publishes an atomic public GitHub snapshot and keeps a durable SQLite generation marker for restart-safe retries.
 - CafeLauncher uses this API as its primary profile, graphics, CFG, and graphics-history source. When the API is unavailable, the launcher can read the public GitHub mirror; pending client edits remain local until the API returns.
-- The backend's root page shows service status. A read-only settings viewer is available at `/viewer`; it reads profile, graphics, CFG, and graphics history from this API.
+- The backend's root page shows service status. A read-only settings viewer is available at `/viewer`; it reads current settings and complete profile/graphics/CFG revision history from this API.
 - The backend is deployed on the Ubuntu server as two `systemd` services, with SQLite/assets under `/var/lib/cafelauncher-backend` and the API bound to `127.0.0.1:8090`. Its public HTTPS path is provided by the existing Tailscale Funnel route; see [`deploy/DEPLOYMENT.md`](deploy/DEPLOYMENT.md).
 - `.github/workflows/backend-ci-deploy.yml` runs tests on Python 3.10 and 3.14, then deploys successful `main` pushes through the dedicated server runner. The runner and server bootstrap are active; the first successful automated deployment completed at commit `161f633`.
 - Keep the API validation rules aligned with the deployed CafeLauncher client; profile writes require a backend sync token and use revision checks.
@@ -43,7 +43,7 @@ The server requires configured tokens at request time. It deliberately has no de
 
 ### Public reads
 
-The browser viewer at `/viewer` presents current profile values, graphics settings, CFG text, and graphics revision history. It is read-only and requests the same `/v1` endpoints listed below from the backend host.
+The browser viewer at `/viewer` presents current profile values, graphics settings, and CFG text. Its “Profile saves” history lists every saved bundle revision and lazily displays the profile, graphics, and CFG values from that same save. It is read-only and requests the `/v1` endpoints listed below from the backend host.
 
 | Method and route | Response |
 | --- | --- |
@@ -52,6 +52,8 @@ The browser viewer at `/viewer` presents current profile values, graphics settin
 | `GET /v1/graphics/{name}` | Latest graphics preset JSON. |
 | `GET /v1/cfg/{filename}` | Latest CFG as UTF-8 text, such as `fab.cfg`. |
 | `GET /v1/graphics/{name}/history?limit=3` | Current distinct graphics snapshot plus up to three older graphics-only versions. |
+| `GET /v1/profiles/{name}/history?limit=20&beforeRevision=...` | Revision dates for profile saves, newest first. Optional cursor pages through older revisions. |
+| `GET /v1/profiles/{name}/history/{revision}` | Complete saved profile, graphics, and CFG bundle for one revision. |
 | `GET /v1/releases/latest` | Most recently published release manifest. |
 | `GET /v1/releases/{version}/launcher` | Immutable launcher asset. |
 | `GET /v1/releases/{version}/graphics-module` | Immutable graphics module asset. |
