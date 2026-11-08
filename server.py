@@ -290,9 +290,44 @@ class ApiHandler(BaseHTTPRequestHandler):
         except ValueError:
             return False
 
+    def _send_viewer_asset(self, asset_name: str) -> None:
+        assets = {
+            "viewer": ("viewer.html", "text/html; charset=utf-8"),
+            "viewer.css": ("viewer.css", "text/css; charset=utf-8"),
+            "viewer.js": ("viewer.js", "text/javascript; charset=utf-8"),
+        }
+        asset = assets.get(asset_name)
+        if asset is None:
+            self._error(404, "not_found", "Viewer asset was not found.")
+            return
+        filename, content_type = asset
+        try:
+            body = (Path(__file__).resolve().parent / "web" / filename).read_bytes()
+        except OSError:
+            self._error(503, "viewer_unavailable", "The profile viewer is unavailable.")
+            return
+        headers = {"Referrer-Policy": "no-referrer"}
+        if filename == "viewer.html":
+            options = "".join(
+                f'<option value="{html.escape(name, quote=True)}" data-cfg="{html.escape(cfg, quote=True)}">'
+                f'{html.escape(name)}</option>'
+                for name, cfg in PROFILE_CFG_FILES.items()
+            )
+            body = body.replace(b"<!-- PROFILE_OPTIONS -->", options.encode("utf-8"))
+            headers["Content-Security-Policy"] = (
+                "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; "
+                "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+            )
+            headers["X-Frame-Options"] = "DENY"
+        self._send_bytes(200, body, content_type, cache_control="no-cache", headers=headers)
+
     def do_GET(self) -> None:
         parsed = urlsplit(self.path)
         parts = [unquote(part) for part in parsed.path.strip("/").split("/") if part]
+
+        if len(parts) == 1 and parts[0] in ("viewer", "viewer.css", "viewer.js"):
+            self._send_viewer_asset(parts[0])
+            return
 
         if not parts:
             try:
@@ -323,6 +358,7 @@ class ApiHandler(BaseHTTPRequestHandler):
 <p><strong>Profiles:</strong> {profile_count}</p>
 <p><strong>GitHub mirror data:</strong> {mirror_status}</p>
 <p><strong>Latest launcher release:</strong> {html.escape(latest_release) if latest_release else "None published"}</p>
+<p><a href="/viewer">Open the read-only profile viewer</a></p>
 <p><a href="/v1/health">Health JSON</a> · <a href="https://github.com/fabjoncela/cafelauncher-backend-mirror/blob/main/mirror-manifest.json">Mirror manifest</a></p>
 </body>
 </html>

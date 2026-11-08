@@ -109,7 +109,7 @@ Wait until `generation` equals `mirrored_generation`, then verify the public `mi
 - From outside the server, check the HTTPS health endpoint and public profile/CFG endpoints.
 - Confirm public reads work without a token and sync/publishing requests still require their respective bearer tokens.
 - Run `backup.py`, then verify that the database, `releases/`, and `tools/` are included in the backup. Keep the backup private.
-- Do not point CafeLauncher clients at this backend until their opt-in adapter, GitHub read fallback, and local pending-write retry have been implemented and tested.
+- CafeLauncher clients use the backend-first adapter with GitHub mirror read fallback and local pending-write retry. The read-only profile viewer is served at `/viewer` by the same API process, so the existing Funnel route exposes it without another listener or port.
 
 ## Automated tests and deployment
 

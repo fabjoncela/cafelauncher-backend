@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>CafeLauncher profile viewer</title>
+  <link rel="stylesheet" href="/viewer.css">
+  <script src="/viewer.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <div>
+      <p class="eyebrow">CAFE LAUNCHER · READ ONLY</p>
+      <h1>Profile settings</h1>
+      <p class="subhead">Current settings loaded directly from the CafeLauncher backend.</p>
+    </div>
+    <a class="back-link" href="/">Backend status</a>
+  </header>
+
+  <main>
+    <section class="toolbar" aria-label="Choose a profile">
+      <label for="profile-select">Profile</label>
+      <select id="profile-select">
+        <!-- PROFILE_OPTIONS -->
+      </select>
+      <button id="refresh-button" type="button">Refresh</button>
+      <p id="load-status" class="load-status" role="status" aria-live="polite">Loading backend data…</p>
+    </section>
+
+    <div id="revision-banner" class="revision-banner" hidden></div>
+
+    <div class="content-grid">
+      <section class="panel">
+        <div class="panel-heading"><div><p class="eyebrow">PROFILE</p><h2>Launcher settings</h2></div></div>
+        <div id="profile-settings" class="table-wrap"><p class="muted">Waiting for data…</p></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading"><div><p class="eyebrow">CS2 DISPLAY</p><h2>Graphics settings</h2></div></div>
+        <div id="graphics-policy" class="table-wrap"></div>
+        <h3 class="subsection-title">Graphics values</h3>
+        <div id="graphics-settings" class="table-wrap"><p class="muted">Waiting for data…</p></div>
+      </section>
+
+      <section class="panel cfg-panel">
+        <div class="panel-heading">
+          <div><p class="eyebrow">COUNTER-STRIKE 2</p><h2 id="cfg-title">Profile CFG</h2></div>
+          <span id="cfg-meta" class="small-meta"></span>
+        </div>
+        <div id="cfg-viewer" class="cfg-viewer"><p class="muted">Waiting for data…</p></div>
+      </section>
+
+      <section class="panel history-panel">
+        <div class="panel-heading">
+          <div><p class="eyebrow">BACKEND HISTORY</p><h2>Graphics versions</h2></div>
+          <span class="small-meta">Most recent first</span>
+        </div>
+        <div id="graphics-history" class="history-list"><p class="muted">Waiting for data…</p></div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

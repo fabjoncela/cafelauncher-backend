@@ -351,6 +351,25 @@ class ApiTests(unittest.TestCase):
         }
         return self.request("/v1/profiles/FabMode/sync", method="PUT", body=json.dumps(payload).encode(), token=token)
 
+    def test_read_only_profile_viewer_is_served_by_backend(self) -> None:
+        status, _, home = self.request("/")
+        self.assertEqual(status, 200)
+        self.assertIn(b'href="/viewer"', home)
+
+        status, headers, page = self.request("/viewer")
+        self.assertEqual(status, 200)
+        self.assertIn("text/html", headers["Content-Type"])
+        self.assertIn("default-src 'none'", headers["Content-Security-Policy"])
+        self.assertIn(b'data-cfg="fab.cfg">FabMode</option>', page)
+        self.assertIn(b'data-cfg="prov.cfg">Provmode</option>', page)
+
+        for path, expected_type in (("/viewer.css", "text/css"), ("/viewer.js", "text/javascript")):
+            with self.subTest(path=path):
+                status, headers, body = self.request(path)
+                self.assertEqual(status, 200)
+                self.assertIn(expected_type, headers["Content-Type"])
+                self.assertTrue(body)
+
     def test_health_reports_database_unavailable(self) -> None:
         with patch.object(server, "_connect", side_effect=sqlite3.OperationalError("simulated storage outage")):
             status, _, body = self.request("/v1/health")

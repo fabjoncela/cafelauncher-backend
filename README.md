@@ -11,11 +11,11 @@ The prototype provides anonymous read endpoints for profile bundles and release 
 - `import_repository.py` validates and imports the six checked-in profile/graphics/CFG bundles into the local SQLite database. The existing profile CFG URLs are rewritten to `/v1/cfg/{file}` routes.
 - Twenty standard-library unit and HTTP integration tests cover validation, import, CFG serving, backup, sync conflicts/history, publishing, asset integrity, and GitHub mirror ref-conflict/restart recovery.
 - `github_mirror.py` publishes an atomic public GitHub snapshot and keeps a durable SQLite generation marker for restart-safe retries.
-- No CafeLauncher client integration has been made.
-- The `/v1` API is not wire-compatible with GitHub REST. CafeLauncher still calls GitHub Contents, commits/compare/history, raw CFG/module, and updater endpoints directly; a client adapter and opt-in migration are required before this backend can replace GitHub.
+- CafeLauncher uses this API as its primary profile, graphics, CFG, and graphics-history source. When the API is unavailable, the launcher can read the public GitHub mirror; pending client edits remain local until the API returns.
+- The backend's root page shows service status. A read-only settings viewer is available at `/viewer`; it reads profile, graphics, CFG, and graphics history from this API.
 - The backend is deployed on the Ubuntu server as two `systemd` services, with SQLite/assets under `/var/lib/cafelauncher-backend` and the API bound to `127.0.0.1:8090`. Its public HTTPS path is provided by the existing Tailscale Funnel route; see [`deploy/DEPLOYMENT.md`](deploy/DEPLOYMENT.md).
 - `.github/workflows/backend-ci-deploy.yml` runs tests on Python 3.10 and 3.14, then deploys successful `main` pushes through the dedicated server runner. The runner and server bootstrap are active; the first successful automated deployment completed at commit `161f633`.
-- The API contract is provisional and must be wired into CafeLauncher before these endpoints affect café PCs.
+- Keep the API validation rules aligned with the deployed CafeLauncher client; profile writes require a backend sync token and use revision checks.
 
 ## Run locally on Windows
 
@@ -42,6 +42,8 @@ The server requires configured tokens at request time. It deliberately has no de
 ## API contract
 
 ### Public reads
+
+The browser viewer at `/viewer` presents current profile values, graphics settings, CFG text, and graphics revision history. It is read-only and requests the same `/v1` endpoints listed below from the backend host.
 
 | Method and route | Response |
 | --- | --- |
