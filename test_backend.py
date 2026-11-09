@@ -355,6 +355,10 @@ class ApiTests(unittest.TestCase):
         status, _, home = self.request("/")
         self.assertEqual(status, 200)
         self.assertIn(b'href="/viewer"', home)
+        self.assertIn(b"Service healthy", home)
+        self.assertIn(b"Last successful sync:", home)
+        self.assertIn(b"No launcher release published yet", home)
+        self.assertIn(b'href="https://github.com/fabjoncela/cafelauncher-backend#api-contract"', home)
 
         status, headers, page = self.request("/viewer")
         self.assertEqual(status, 200)
@@ -365,7 +369,11 @@ class ApiTests(unittest.TestCase):
         self.assertIn(b">Profile saves<", page)
         self.assertIn(b'id="load-history-button"', page)
 
-        for path, expected_type in (("/viewer.css", "text/css"), ("/viewer.js", "text/javascript")):
+        for path, expected_type in (
+            ("/viewer.css", "text/css"),
+            ("/viewer.js", "text/javascript"),
+            ("/status.css", "text/css"),
+        ):
             with self.subTest(path=path):
                 status, headers, body = self.request(path)
                 self.assertEqual(status, 200)

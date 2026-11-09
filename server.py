@@ -295,6 +295,7 @@ class ApiHandler(BaseHTTPRequestHandler):
             "viewer": ("viewer.html", "text/html; charset=utf-8"),
             "viewer.css": ("viewer.css", "text/css; charset=utf-8"),
             "viewer.js": ("viewer.js", "text/javascript; charset=utf-8"),
+            "status.css": ("status.css", "text/css; charset=utf-8"),
         }
         asset = assets.get(asset_name)
         if asset is None:
@@ -319,7 +320,7 @@ class ApiHandler(BaseHTTPRequestHandler):
         parsed = urlsplit(self.path)
         parts = [unquote(part) for part in parsed.path.strip("/").split("/") if part]
 
-        if len(parts) == 1 and parts[0] in ("viewer", "viewer.css", "viewer.js"):
+        if len(parts) == 1 and parts[0] in ("viewer", "viewer.css", "viewer.js", "status.css"):
             self._send_viewer_asset(parts[0])
             return
 
@@ -339,21 +340,57 @@ class ApiHandler(BaseHTTPRequestHandler):
                 return
             mirror_ready = mirror is not None and mirror["last_success_utc"] is not None
             mirror_current = mirror_ready and mirror["generation"] == mirror["mirrored_generation"]
-            mirror_status = "Up to date" if mirror_current else "Waiting to sync"
+            mirror_status = (
+                "Up to date" if mirror_current else "Waiting to sync" if mirror_ready else "Not synced yet"
+            )
+            mirror_generation = mirror["generation"] if mirror is not None else 0
+            mirrored_generation = mirror["mirrored_generation"] if mirror is not None else 0
+            last_success_utc = mirror["last_success_utc"] if mirror_ready else None
             latest_release = max(
                 (row["version"] for row in releases), key=_launcher_version_key, default=None
             )
+            revision_dir = Path(__file__).resolve().parent.name
+            deployed_revision = revision_dir if re.fullmatch(r"[0-9a-f]{40}", revision_dir) else None
+            if deployed_revision:
+                deployment_value = (
+                    f'<a href="https://github.com/fabjoncela/cafelauncher-backend/commit/{deployed_revision}">'
+                    f'{deployed_revision[:12]}</a>'
+                )
+                deployment_label = "Deployed commit"
+            else:
+                deployment_value = "Unavailable in this source checkout"
+                deployment_label = "Deployment revision"
+            mirror_time = (
+                f'<time datetime="{html.escape(last_success_utc, quote=True)}">'
+                f'{html.escape(last_success_utc.removesuffix("Z"))} UTC</time>'
+                if last_success_utc else "No successful sync yet"
+            )
+            release_value = html.escape(latest_release) if latest_release else "No launcher release published yet"
             body = f"""<!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>CafeLauncher Backend</title></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>CafeLauncher Backend Status</title><link rel="stylesheet" href="/status.css"></head>
 <body>
-<h1>CafeLauncher Backend</h1>
-<p><strong>API:</strong> Running (version {html.escape(APP_VERSION)})</p>
-<p><strong>Profiles:</strong> {profile_count}</p>
-<p><strong>GitHub mirror data:</strong> {mirror_status}</p>
-<p><strong>Latest launcher release:</strong> {html.escape(latest_release) if latest_release else "None published"}</p>
-<p><a href="/viewer">Open the read-only profile viewer</a></p>
-<p><a href="/v1/health">Health JSON</a> · <a href="https://github.com/fabjoncela/cafelauncher-backend-mirror/blob/main/mirror-manifest.json">Mirror manifest</a></p>
+<header class="site-header">
+  <div><p class="eyebrow">CAFE LAUNCHER · PUBLIC SERVICE</p><h1>Backend status</h1>
+    <p class="subhead">Status and public data freshness for the CafeLauncher backend.</p></div>
+  <span class="health-badge"><span class="status-dot"></span>Service healthy</span>
+</header>
+<main>
+  <p class="purpose">This service supplies CafeLauncher profiles, graphics settings, CFG files, and release assets. Use the profile viewer to inspect current settings. Profile edits and release publishing require authorization and are not available on this page.</p>
+  <section class="status-grid" aria-label="Backend status details">
+    <article class="status-card"><p class="card-label">API</p><p class="card-value">Running</p><p class="card-detail">Service version {html.escape(APP_VERSION)}</p></article>
+    <article class="status-card"><p class="card-label">Profiles</p><p class="card-value">{profile_count}</p><p class="card-detail">Profiles with saved backend data</p></article>
+    <article class="status-card"><p class="card-label">GitHub data mirror</p><p class="card-value">{html.escape(mirror_status)}</p><p class="card-detail">Generation {mirror_generation} · mirrored {mirrored_generation}</p><p class="card-detail">Last successful sync: {mirror_time}</p></article>
+    <article class="status-card"><p class="card-label">Launcher release</p><p class="card-value release-value">{release_value}</p><p class="card-detail">Latest published updater build</p></article>
+  </section>
+  <nav class="quick-links" aria-label="Backend links">
+    <a class="primary-link" href="/viewer">Open profile viewer</a>
+    <a href="https://github.com/fabjoncela/cafelauncher-backend#api-contract">API documentation</a>
+    <a href="/v1/health">Health JSON</a>
+    <a href="https://github.com/fabjoncela/cafelauncher-backend-mirror/blob/main/mirror-manifest.json">Mirror manifest</a>
+  </nav>
+  <footer class="deployment-info"><span>{deployment_label}: {deployment_value}</span></footer>
+</main>
 </body>
 </html>
 """.encode("utf-8")
@@ -361,7 +398,10 @@ class ApiHandler(BaseHTTPRequestHandler):
                 200,
                 body,
                 "text/html; charset=utf-8",
-                headers={"Content-Security-Policy": "default-src 'none'; base-uri 'none'; form-action 'none'", "Referrer-Policy": "no-referrer"},
+                headers={
+                    "Content-Security-Policy": "default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+                    "Referrer-Policy": "no-referrer",
+                },
             )
             return
 
