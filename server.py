@@ -330,6 +330,10 @@ class ApiHandler(BaseHTTPRequestHandler):
                     profile_count = connection.execute(
                         "SELECT COUNT(DISTINCT profile_name) FROM profile_revisions"
                     ).fetchone()[0]
+                    latest_profile_save = connection.execute(
+                        "SELECT profile_name, created_utc FROM profile_revisions "
+                        "ORDER BY created_utc DESC, revision DESC LIMIT 1"
+                    ).fetchone()
                     mirror = connection.execute(
                         "SELECT generation, mirrored_generation, last_success_utc "
                         "FROM github_mirror_state WHERE singleton = 1"
@@ -349,6 +353,21 @@ class ApiHandler(BaseHTTPRequestHandler):
             latest_release = max(
                 (row["version"] for row in releases), key=_launcher_version_key, default=None
             )
+            if latest_profile_save is not None:
+                profile_save_utc = latest_profile_save["created_utc"]
+                try:
+                    profile_save_datetime = datetime.fromisoformat(profile_save_utc.replace("Z", "+00:00"))
+                    profile_save_label = profile_save_datetime.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+                except (AttributeError, ValueError):
+                    profile_save_label = profile_save_utc
+                latest_profile_save_markup = (
+                    f'<time datetime="{html.escape(profile_save_utc, quote=True)}">'
+                    f'{html.escape(profile_save_label)}</time>'
+                )
+                latest_profile_save_profile = html.escape(latest_profile_save["profile_name"])
+            else:
+                latest_profile_save_markup = "No profile saves yet"
+                latest_profile_save_profile = ""
             revision_dir = Path(__file__).resolve().parent.name
             deployed_revision = revision_dir if re.fullmatch(r"[0-9a-f]{40}", revision_dir) else None
             if deployed_revision:
@@ -365,7 +384,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                 f'{html.escape(last_success_utc.removesuffix("Z"))} UTC</time>'
                 if last_success_utc else "No successful sync yet"
             )
-            release_value = html.escape(latest_release) if latest_release else "No launcher release published yet"
+            release_value = html.escape(latest_release) if latest_release else "No backend-hosted package published yet"
             body = f"""<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>CafeLauncher Backend Status</title><link rel="stylesheet" href="/status.css"></head>
@@ -381,7 +400,8 @@ class ApiHandler(BaseHTTPRequestHandler):
     <article class="status-card"><p class="card-label">API</p><p class="card-value">Running</p><p class="card-detail">Service version {html.escape(APP_VERSION)}</p></article>
     <article class="status-card"><p class="card-label">Profiles</p><p class="card-value">{profile_count}</p><p class="card-detail">Profiles with saved backend data</p></article>
     <article class="status-card"><p class="card-label">GitHub data mirror</p><p class="card-value">{html.escape(mirror_status)}</p><p class="card-detail">Generation {mirror_generation} · mirrored {mirrored_generation}</p><p class="card-detail">Last successful sync: {mirror_time}</p></article>
-    <article class="status-card"><p class="card-label">Launcher release</p><p class="card-value release-value">{release_value}</p><p class="card-detail">Latest published updater build</p></article>
+    <article class="status-card"><p class="card-label">Latest profile save</p><p class="card-value release-value">{latest_profile_save_markup}</p><p class="card-detail">{latest_profile_save_profile or "No saved profile bundles"}</p></article>
+    <article class="status-card"><p class="card-label">Backend-hosted release</p><p class="card-value release-value">{release_value}</p><p class="card-detail">The launcher currently auto-updates from Cs-script on GitHub.</p></article>
   </section>
   <nav class="quick-links" aria-label="Backend links">
     <a class="primary-link" href="/viewer">Open profile viewer</a>

@@ -358,7 +358,11 @@ class ApiTests(unittest.TestCase):
         self.assertIn(b'href="/viewer"', home)
         self.assertIn(b"Service healthy", home)
         self.assertIn(b"Last successful sync:", home)
-        self.assertIn(b"No launcher release published yet", home)
+        self.assertIn(b"No backend-hosted package published yet", home)
+        self.assertIn(b"Backend-hosted release", home)
+        self.assertIn(b"The launcher currently auto-updates from Cs-script on GitHub.", home)
+        self.assertIn(b"Latest profile save", home)
+        self.assertIn(b"No profile saves yet", home)
         self.assertIn(b'href="https://github.com/fabjoncela/cafelauncher-backend#api-contract"', home)
 
         status, headers, page = self.request("/viewer")
@@ -384,6 +388,10 @@ class ApiTests(unittest.TestCase):
                     self.assertIn(b"/v1/profiles/${encodeURIComponent(profileName)}/history?", body)
                     self.assertIn(b"Changes vs current", body)
                     self.assertIn(b"/v1/viewer-schema", body)
+                    self.assertIn(b"buildLineDiff", body)
+                    self.assertIn(b"Copy saved CFG", body)
+                    self.assertIn(b"Download saved CFG", body)
+                    self.assertIn(b"current-cfg-actions", body)
 
         status, headers, body = self.request("/v1/viewer-schema")
         self.assertEqual(status, 200)

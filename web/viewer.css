@@ -124,6 +124,21 @@ button:disabled { cursor: wait; opacity: .62; }
   background: var(--code);
   scrollbar-color: #435a73 var(--code);
 }
+.cfg-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 40px; margin: 0 0 8px; }
+.cfg-action-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.cfg-action-buttons button { padding: 7px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel-raised); color: var(--text); cursor: pointer; }
+.cfg-action-buttons button:hover { border-color: var(--accent); }
+.cfg-action-status { font-size: 12px; }
+.clipboard-fallback { position: fixed; left: -10000px; top: 0; }
+.cfg-diff { max-height: 500px; margin: 8px 0; overflow: auto; border: 1px solid #27394d; border-radius: 8px; background: var(--code); font: 13px/1.65 Consolas, "Cascadia Code", monospace; }
+.cfg-diff-line { display: grid; grid-template-columns: 28px minmax(max-content, 1fr); min-width: 100%; padding-right: 12px; white-space: pre; }
+.cfg-diff-line code { font: inherit; }
+.cfg-diff-marker { position: sticky; left: 0; padding-left: 8px; user-select: none; background: var(--code); }
+.cfg-diff-line.removed { background: #6a242b55; color: #ffadb2; }
+.cfg-diff-line.added { background: #1e573d55; color: #9be1b3; }
+.saved-cfg-details { margin-top: 8px; }
+.saved-cfg-details summary { color: #a9bdd3; cursor: pointer; font-size: 12px; }
+.saved-cfg-details .history-cfg { margin-top: 7px; }
 .cfg-line { display: grid; grid-template-columns: 52px minmax(max-content, 1fr); min-width: 100%; padding-right: 16px; font: 13px/1.65 Consolas, "Cascadia Code", monospace; white-space: pre; }
 .cfg-line:hover { background: #ffffff08; }
 .line-number { position: sticky; left: 0; padding-right: 12px; color: #71859d; text-align: right; user-select: none; background: #0b121c; }

@@ -7,6 +7,7 @@ const revisionBanner = document.querySelector("#revision-banner");
 const cfgTitle = document.querySelector("#cfg-title");
 const cfgMeta = document.querySelector("#cfg-meta");
 const cfgViewer = document.querySelector("#cfg-viewer");
+const currentCfgActions = document.querySelector("#current-cfg-actions");
 const profileHistory = document.querySelector("#profile-history");
 const loadHistoryButton = document.querySelector("#load-history-button");
 const loadMoreHistoryButton = document.querySelector("#load-more-history");
@@ -161,7 +162,125 @@ function appendHighlightedCode(code, line) {
   }
 }
 
-function renderCfg(content) {
+function safeFilename(value) {
+  return String(value || "cafelauncher.cfg").replace(/[\\/:*?"<>|]/g, "_");
+}
+
+function addCfgActions(target, content, filename, copyLabel = "Copy CFG", downloadLabel = "Download CFG") {
+  target.replaceChildren();
+  const buttons = document.createElement("div");
+  buttons.className = "cfg-action-buttons";
+  const copy = document.createElement("button");
+  copy.type = "button";
+  copy.textContent = copyLabel;
+  copy.addEventListener("click", async () => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(String(content));
+      } else {
+        const input = document.createElement("textarea");
+        input.value = String(content);
+        input.setAttribute("readonly", "");
+        input.className = "clipboard-fallback";
+        document.body.append(input);
+        input.select();
+        const copied = document.execCommand("copy");
+        input.remove();
+        if (!copied) throw new Error("Clipboard access is unavailable.");
+      }
+      status.textContent = "Copied to clipboard.";
+    } catch (error) {
+      status.textContent = `Copy failed: ${error.message}`;
+    }
+  });
+  const download = document.createElement("button");
+  download.type = "button";
+  download.textContent = downloadLabel;
+  download.addEventListener("click", () => {
+    const url = URL.createObjectURL(new Blob([String(content)], { type: "text/plain;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = safeFilename(filename);
+    link.hidden = true;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    status.textContent = `Downloaded ${link.download}.`;
+  });
+  buttons.append(copy, download);
+  const status = document.createElement("span");
+  status.className = "cfg-action-status muted";
+  status.setAttribute("role", "status");
+  target.append(buttons, status);
+}
+
+function buildLineDiff(currentText, savedText) {
+  const currentLines = String(currentText).replace(/\r\n/g, "\n").split("\n");
+  const savedLines = String(savedText).replace(/\r\n/g, "\n").split("\n");
+  const rows = currentLines.length + 1;
+  const columns = savedLines.length + 1;
+  const cellCount = rows * columns;
+  if (currentLines.length + savedLines.length > 5000 || cellCount > 250000) return null;
+
+  const lcs = new Uint32Array(cellCount);
+  for (let current = currentLines.length - 1; current >= 0; current -= 1) {
+    for (let saved = savedLines.length - 1; saved >= 0; saved -= 1) {
+      const index = current * columns + saved;
+      lcs[index] = currentLines[current] === savedLines[saved]
+        ? 1 + lcs[(current + 1) * columns + saved + 1]
+        : Math.max(lcs[(current + 1) * columns + saved], lcs[index + 1]);
+    }
+  }
+
+  const operations = [];
+  let current = 0;
+  let saved = 0;
+  while (current < currentLines.length || saved < savedLines.length) {
+    if (current < currentLines.length && saved < savedLines.length && currentLines[current] === savedLines[saved]) {
+      operations.push({ kind: "same", line: currentLines[current] });
+      current += 1;
+      saved += 1;
+    } else if (current < currentLines.length && (
+      saved >= savedLines.length || lcs[(current + 1) * columns + saved] >= lcs[current * columns + saved + 1]
+    )) {
+      operations.push({ kind: "removed", line: currentLines[current] });
+      current += 1;
+    } else {
+      operations.push({ kind: "added", line: savedLines[saved] });
+      saved += 1;
+    }
+  }
+  return operations;
+}
+
+function renderCfgDiff(target, currentText, savedText) {
+  const operations = buildLineDiff(currentText, savedText);
+  if (!operations) {
+    const note = document.createElement("p");
+    note.className = "muted";
+    note.textContent = "This CFG is too large for an inline diff. Download it to compare the full file.";
+    target.append(note);
+    return;
+  }
+  const diff = document.createElement("div");
+  diff.className = "cfg-diff";
+  diff.setAttribute("aria-label", "Saved CFG compared with current CFG");
+  for (const operation of operations) {
+    const row = document.createElement("div");
+    row.className = `cfg-diff-line ${operation.kind}`;
+    const marker = document.createElement("span");
+    marker.className = "cfg-diff-marker";
+    marker.textContent = operation.kind === "added" ? "+" : operation.kind === "removed" ? "−" : " ";
+    const line = document.createElement("code");
+    line.textContent = operation.line || " ";
+    row.append(marker, line);
+    diff.append(row);
+  }
+  target.append(diff);
+}
+
+function renderCfg(content, filename) {
   cfgViewer.replaceChildren();
   const lines = String(content).replace(/\r\n/g, "\n").split("\n");
   const fragment = document.createDocumentFragment();
@@ -178,6 +297,7 @@ function renderCfg(content) {
   });
   cfgViewer.append(fragment);
   cfgMeta.textContent = `${lines.length} lines · ${new TextEncoder().encode(content).length.toLocaleString()} bytes`;
+  addCfgActions(currentCfgActions, content, filename);
 }
 
 function formatDate(value) {
@@ -284,8 +404,19 @@ function renderHistoricalBundle(target, snapshot) {
   const cfgChanged = String(snapshot.cfg ?? "") !== String(currentBundle.cfg ?? "");
   const cfgStatus = document.createElement("p");
   cfgStatus.className = cfgChanged ? "history-change-status" : "muted";
-  cfgStatus.textContent = cfgChanged ? "The saved CFG differs from the current CFG; the saved text is shown below." : "The CFG matches the current revision.";
+  cfgStatus.textContent = cfgChanged ? "The saved CFG differs from the current CFG. Removed lines are red; added lines are green." : "The CFG matches the current revision.";
   target.append(cfgStatus);
+  const cfgHeading = document.createElement("h3");
+  cfgHeading.className = "snapshot-heading";
+  cfgHeading.textContent = "Saved CFG";
+  target.append(cfgHeading);
+  const cfgContent = String(snapshot.cfg ?? "");
+  const profile = (viewerSchema.profiles || []).find((item) => item.name === profileSelect.value);
+  const cfgActions = document.createElement("div");
+  cfgActions.className = "cfg-actions";
+  addCfgActions(cfgActions, cfgContent, profile?.cfg || "saved.cfg", "Copy saved CFG", "Download saved CFG");
+  target.append(cfgActions);
+  if (cfgChanged) renderCfgDiff(target, currentBundle.cfg ?? "", cfgContent);
   for (const section of viewerSchema.sections || []) {
     const heading = document.createElement("h3");
     heading.className = "snapshot-heading";
@@ -295,13 +426,15 @@ function renderHistoricalBundle(target, snapshot) {
     renderTable(table, valueAtPath(snapshot, section.source), section.omit || [], section);
     target.append(heading, table);
   }
-  const cfgHeading = document.createElement("h3");
-  cfgHeading.className = "snapshot-heading";
-  cfgHeading.textContent = "Saved CFG";
+  const savedDetails = document.createElement("details");
+  savedDetails.className = "saved-cfg-details";
+  const savedSummary = document.createElement("summary");
+  savedSummary.textContent = "Show complete saved CFG";
   const cfg = document.createElement("pre");
   cfg.className = "history-cfg";
-  cfg.textContent = String(snapshot.cfg ?? "");
-  target.append(cfgHeading, cfg);
+  cfg.textContent = cfgContent;
+  savedDetails.append(savedSummary, cfg);
+  target.append(savedDetails);
 }
 
 async function readResponse(response, label, asText = false) {
@@ -330,6 +463,7 @@ async function loadProfile() {
   renderSettingsSections(null, "Loading…");
   cfgTitle.textContent = `${cfgName} CFG`;
   cfgMeta.textContent = "";
+  currentCfgActions.replaceChildren();
 
   try {
     let bundle;
@@ -354,7 +488,7 @@ async function loadProfile() {
     currentBundle = bundle;
 
     renderSettingsSections(bundle);
-    renderCfg(bundle.cfg);
+    renderCfg(bundle.cfg, cfgName);
     revisionBanner.textContent = `${profileName} · backend revision ${bundle.revision}`;
     revisionBanner.hidden = false;
 
@@ -365,6 +499,7 @@ async function loadProfile() {
     loadStatus.dataset.state = "error";
     loadStatus.textContent = `Backend data could not be loaded: ${error.message}`;
     showMessage(cfgViewer, "No CFG data loaded.");
+    currentCfgActions.replaceChildren();
     showMessage(profileHistory, "Load the current profile before viewing history.");
     renderSettingsSections(null, "No settings loaded.");
   } finally {
