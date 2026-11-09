@@ -1,15 +1,15 @@
-# CafeLauncher Backend Prototype
+# CafeLauncher Backend
 
 This is a standalone backend project in its own folder. It does not modify or import code into `ProjectCafe`.
 
-The prototype provides anonymous read endpoints for profile bundles and release assets, a bearer-token-protected profile sync endpoint, complete profile-bundle revision history, and a separate token-protected release publishing path. It uses Python's standard library and SQLite; no package installation is needed.
+The service provides anonymous read endpoints for profile bundles and release assets, a bearer-token-protected atomic profile sync endpoint, complete profile-bundle revision history, and a separate token-protected release publishing path. It uses Python's standard library and SQLite; no package installation is needed.
 
 ## Current status
 
-- API prototype implemented in `server.py`.
+- API implementation in `server.py`.
 - Validation rules mirrored from the current CafeLauncher source for profile fields, graphics values/policies, CFG sensitivity, CFG URL migration, and website URLs.
 - `import_repository.py` validates and imports the six checked-in profile/graphics/CFG bundles into the local SQLite database. The existing profile CFG URLs are rewritten to `/v1/cfg/{file}` routes.
-- Twenty-four standard-library unit and HTTP integration tests cover validation, import, CFG serving, backup, sync conflicts/history, publishing, asset integrity, and GitHub mirror ref-conflict/restart recovery.
+- Twenty-five standard-library unit and HTTP integration tests cover validation, import, CFG serving, backup, sync conflicts/history, publishing retries, staged-release cleanup, asset integrity, and GitHub mirror ref-conflict/restart recovery.
 - `github_mirror.py` publishes an atomic public GitHub snapshot and keeps a durable SQLite generation marker for restart-safe retries.
 - CafeLauncher uses this API as its primary profile, graphics, CFG, and graphics-history source. When the API is unavailable, the launcher can read the public GitHub mirror; pending client edits remain local until the API returns.
 - The backend's root page is a responsive status dashboard with API health, profile count, mirror generation and last successful sync, latest launcher release, and deployed commit. It links to API docs, health JSON, the public mirror manifest, and the read-only profile viewer at `/viewer`.
@@ -48,7 +48,7 @@ The browser viewer at `/viewer` presents current profile values, graphics settin
 
 | Method and route | Response |
 | --- | --- |
-| `GET /v1/health` | Service status and prototype version; returns `503` if SQLite storage is unavailable. |
+| `GET /v1/health` | Service status and application version; returns `503` if SQLite storage is unavailable. |
 | `GET /v1/viewer-schema` | Profile/CFG choices, viewer sections, field labels/groups, and enum labels used by `/viewer`. |
 | `GET /v1/profiles/{name}` | Latest profile JSON. |
 | `GET /v1/graphics/{name}` | Latest graphics preset JSON. |
@@ -57,6 +57,7 @@ The browser viewer at `/viewer` presents current profile values, graphics settin
 | `GET /v1/profiles/{name}/history?limit=20&beforeRevision=...` | Revision dates for profile saves, newest first. Optional cursor pages through older revisions. |
 | `GET /v1/profiles/{name}/history/{revision}` | Complete saved profile, graphics, and CFG bundle for one revision. |
 | `GET /v1/releases/latest` | Most recently published release manifest. |
+| `GET /v1/releases/{version}/manifest` | Manifest for one exact published release version; used by the publisher to recover safely from an ambiguous retry. |
 | `GET /v1/releases/{version}/launcher` | Immutable launcher asset. |
 | `GET /v1/releases/{version}/graphics-module` | Immutable graphics module asset. |
 | `GET /v1/tools/logihub/latest` | Latest mirrored Logitech helper metadata. |
@@ -150,6 +151,15 @@ python .\backup.py 'D:\CafeLauncherBackups\2026-11-07'
 
 Pause publishing while the backup runs to keep the database and asset snapshot aligned. Restore by stopping the service, preserving the current data directory, copying the backed-up database and asset directories into the configured data directory, then starting the service and checking `/v1/health` and the latest profile/release endpoints. Keep backups off the public web root and do not include tokens.
 
+Incomplete launcher uploads can leave files under `data/releases/<version>/` without a published database record. Inspect them without changing data:
+
+```powershell
+python .\inspect_staged_releases.py
+python .\inspect_staged_releases.py --version 2026.11.09.1
+```
+
+Same-byte retries are safe. If an unpublished staged version contains different intended bytes, use a new version or explicitly clean the orphan after reviewing the inspection report. Cleanup prompts for the exact version, rechecks under a SQLite write lock that it is unpublished, and verifies that the file names, sizes, and hashes still match the displayed inventory before removal. It refuses unexpected files. Pause publishing before cleanup; automatic cleanup is not performed.
+
 ## Tailscale Funnel deployment shape
 
 The Ubuntu service is bound to loopback and exposed through Funnel. CaféLauncher clients can use the HTTPS `*.ts.net` URL without joining the tailnet. Do not bind the application to `0.0.0.0` when relying on Funnel as the public entry point.
@@ -168,21 +178,19 @@ CAFELAUNCHER_GITHUB_TOKEN=<fine-grained-token>
 
 The backend records a new mirror generation in the same SQLite transaction as every changed profile bundle, release publication, helper publication, and repository import. Identical profile bundles do not create a revision or mirror job. Graphics history records only revisions where the graphics JSON changed, matching CafeLauncher's GitHub path history; profile-only or CFG-only syncs do not appear as graphics versions. Run `python3 github_mirror.py --watch` as a separate persistent service. It checks for new generations every 10 seconds, retries failures with increasing delays capped at 20 minutes, and resumes pending generations after process or machine restart. `python3 github_mirror.py --once` attempts one update; `--status` shows whether the last generation reached GitHub. The example systemd unit is `deploy/cafelauncher-github-mirror.service`; adjust its paths/user and use the same `CAFELAUNCHER_DATA_DIR` as the API service before installing it.
 
-Each successful update is one GitHub commit containing a `mirror-manifest.json`, current profile/graphics/CFG files, recent graphics history, published releases, and mirrored helper assets. The manifest maps logical API resources to raw GitHub paths and includes revisions and SHA-256 values for a future CafeLauncher fallback adapter. Existing binary limits stay below GitHub's 100 MiB per-blob limit, although frequent large-file updates increase mirror repository history and storage. [GitHub Git blobs API](https://docs.github.com/en/rest/git/blobs), [GitHub repository limits](https://docs.github.com/en/repositories/creating-and-managing-repositories/repository-limits)
+Each successful update is one GitHub commit containing a `mirror-manifest.json`, current profile/graphics/CFG files, recent graphics history, published releases, and mirrored helper assets. The manifest maps logical API resources to raw GitHub paths and includes revisions and SHA-256 values consumed by the current CafeLauncher mirror fallback. Existing binary limits stay below GitHub's 100 MiB per-blob limit, although frequent large-file updates increase mirror repository history and storage. [GitHub Git blobs API](https://docs.github.com/en/rest/git/blobs), [GitHub repository limits](https://docs.github.com/en/repositories/creating-and-managing-repositories/repository-limits)
 
-If GitHub is unreachable, the saved backend data and dirty generation remain in SQLite; the worker retries later. If the machine hosting the backend is powered off, no new API saves can reach it and its worker cannot run. CafeLauncher must keep unsent edits in its local pending queue and retry them when the backend returns. The mirror currently prepares fallback data only; CafeLauncher read failover and pending-write integration have not been implemented.
+If GitHub is unreachable, the saved backend data and dirty generation remain in SQLite; the worker retries later. If the machine hosting the backend is powered off, new API saves cannot reach it. CafeLauncher keeps failed edits in a local pending queue and retries them when the backend returns while a session token is available. If a previous request may have committed but its response was lost, the editor requires the user to retry that exact queued request, review/discard it, or cancel before saving another edit.
 
-## Before connecting CafeLauncher
+## Current CafeLauncher integration and release boundaries
 
-1. Keep the mirrored rules synchronized with future CafeLauncher changes. The source project remains the authority for profile and graphics behavior.
-2. Decide how old GitHub graphics history should be treated; the prototype starts a new revision history.
-3. Have CafeLauncher build its CFG URL from the new API base URL instead of trusting old `raw.githubusercontent.com` profile URLs.
-4. Implement and verify the client adapter behind an opt-in backend setting before switching defaults. This includes the separate direct GitHub call in `graphics/ApplyGraphics.ps1`, token prompt changes, revision conflict handling, and removal of GitHub quota/commit ancestry UI.
-5. Preserve local pending data, read-back verification, hash checks, conflict handling, and offline behavior.
-6. Add the self-hosted publishing command to the chosen release workflow and publish the actual launcher/module/helper artifacts.
-7. Decide whether to mirror the separate Logitech helper GitHub release or leave that dependency outside the migration.
-8. Deploy to Ubuntu, set service secrets, expose through Funnel, and verify backup/restore before directing clients to it.
-9. Only after migration, remove GitHub runtime calls. GitHub source hosting and CI remain separate unless those are also explicitly migrated.
+The backend-integrated CafeLauncher client is active on the source project's `main` branch and uses this API for profile, graphics, and CFG reads plus atomic profile-bundle writes. Reads fall back to the public GitHub mirror only after validating manifest identity, expected paths, and payload hashes. The client checks revisions, reads successful writes back, and keeps failed writes locally for retry.
+
+Launcher distribution and profile data are separate. **Launcher updates remain on the original `Cs-script` GitHub update endpoints and the existing Google Drive distribution workflow.** The backend release manifest and publisher are available, but they are not wired into the launcher updater; no launcher release has been published through this backend as of 2026-11-09. Keep the graphics module's reviewed Git blob SHA pin and its GitHub source. The optional Logitech helper download also remains on its separate GitHub release. These are current boundaries, not unimplemented profile API integration.
+
+The initial data import created revision 1 for each profile and did not import old GitHub commit history. Backend profile history begins with the first imported/synced bundle; graphics history includes only revisions that changed graphics data. A restored older database can lower profile revisions, so the launcher warns before accepting a lower primary-backend revision and defaults to cancel.
+
+Keep mirrored validation rules synchronized with CafeLauncher's profile and graphics schema. The source project remains the authority for launcher behavior. Continue using the read-only profile viewer and public mirror as documented; do not treat backend release publishing as the active updater until a separate release-channel migration is planned, staged, and verified.
 
 ## Security notes
 

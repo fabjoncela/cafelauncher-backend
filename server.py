@@ -563,6 +563,26 @@ class ApiHandler(BaseHTTPRequestHandler):
             )
             return
 
+        if len(parts) == 4 and parts[:2] == ["v1", "releases"] and parts[3] == "manifest":
+            version = parts[2]
+            if not _is_launcher_release_version(version):
+                self._error(400, "invalid_release_version", "Release version is invalid.")
+                return
+            with _connect() as connection:
+                row = connection.execute(
+                    "SELECT manifest_json FROM releases WHERE version = ?", (version,)
+                ).fetchone()
+            if row is None:
+                self._error(404, "release_not_found", "Release was not found.")
+                return
+            self._send_bytes(
+                200,
+                row["manifest_json"].encode("utf-8"),
+                "application/json; charset=utf-8",
+                cache_control="no-cache",
+            )
+            return
+
         if parts == ["v1", "releases", "latest"]:
             with _connect() as connection:
                 rows = connection.execute("SELECT version, manifest_json FROM releases").fetchall()

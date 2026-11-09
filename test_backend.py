@@ -21,6 +21,7 @@ import publish
 import server
 import backup
 import github_mirror
+import inspect_staged_releases
 from validation import PROFILE_CFG_FILES, PROFILE_DEFAULTS, normalize_graphics, normalize_profile, validate_cfg
 
 
@@ -621,6 +622,9 @@ class ApiTests(unittest.TestCase):
         status, _, body = self.request("/v1/releases/latest")
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["version"], "2026.11.07.1")
+        status, _, body = self.request("/v1/releases/2026.11.07.1/manifest")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["version"], "2026.11.07.1")
         status, _, body = self.request("/v1/releases/2026.11.07.1/launcher")
         self.assertEqual(status, 200)
         self.assertEqual(body, launcher)
@@ -640,6 +644,46 @@ class ApiTests(unittest.TestCase):
         status, _, body = self.request(path, method="PUT", body=original, token=token, content_type="application/octet-stream")
         self.assertEqual(status, 201)
         self.assertEqual(json.loads(body)["sha256"], hashlib.sha256(original).hexdigest())
+
+    def test_staged_release_cleanup_requires_unchanged_inventory_and_unpublished_version(self) -> None:
+        version = "2026.11.07.6"
+        staged = Path(self.temp.name) / "releases" / version
+        staged.mkdir(parents=True)
+        asset = staged / "launcher.bin"
+        asset.write_bytes(launcher_asset(b"staged launcher"))
+        report = inspect_staged_releases.inspect_staged_releases(version)
+        self.assertEqual(len(report), 1)
+
+        asset.write_bytes(launcher_asset(b"changed after review"))
+        with self.assertRaisesRegex(ValueError, "changed since they were displayed"):
+            inspect_staged_releases.remove_staged_release(version, report[0]["files"])
+        self.assertTrue(asset.exists())
+
+        report = inspect_staged_releases.inspect_staged_releases(version)
+        removed = inspect_staged_releases.remove_staged_release(version, report[0]["files"])
+        self.assertEqual(removed, 1)
+        self.assertFalse(staged.exists())
+
+        token = os.environ["CAFELAUNCHER_PUBLISH_TOKEN"]
+        published_version = "2026.11.07.7"
+        for kind, body in (("launcher", launcher_asset(b"published launcher")), ("graphics-module", b"published module")):
+            status, _, _ = self.request(
+                f"/v1/admin/releases/{published_version}/{kind}",
+                method="PUT",
+                body=body,
+                token=token,
+                content_type="application/octet-stream",
+            )
+            self.assertEqual(status, 201)
+        status, _, _ = self.request(
+            f"/v1/admin/releases/{published_version}/manifest",
+            method="PUT",
+            body=b"{}",
+            token=token,
+        )
+        self.assertEqual(status, 201)
+        with self.assertRaisesRegex(ValueError, "this release version is published"):
+            inspect_staged_releases.remove_staged_release(published_version, [])
 
     def test_latest_release_uses_launcher_version_not_upload_time(self) -> None:
         token = os.environ["CAFELAUNCHER_PUBLISH_TOKEN"]
@@ -755,8 +799,35 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(status, 200)
             self.assertEqual(json.loads(body)["version"], "2026.11.07.2")
 
+            # Simulate the server committing the manifest/tool while the upload response is lost.
+            original_put = publish._put
+
+            def put_then_lose_response(url: str, token_value: str, body: bytes, content_type: str):
+                result = original_put(url, token_value, body, content_type)
+                if url.endswith("/manifest") or "/admin/tools/" in url:
+                    raise RuntimeError("simulated lost upload response")
+                return result
+
+            retry_args = Namespace(
+                version="2026.11.07.8",
+                launcher=launcher_path,
+                graphics_module=module_path,
+                release_notes="Retry after lost response",
+            )
+            with patch("publish._put", side_effect=put_then_lose_response):
+                publish.publish_release(retry_args, token, publish._base_url(self.base))
+            publish.publish_release(retry_args, token, publish._base_url(self.base))
+            retry_args.release_notes = "Different notes must not mutate an immutable release"
+            with self.assertRaisesRegex(RuntimeError, "already published with different files or release notes"):
+                publish.publish_release(retry_args, token, publish._base_url(self.base))
+
             tool_args = Namespace(tool="logihub", version="v0.1.0-test", asset=tool_path)
+            with patch("publish._put", side_effect=put_then_lose_response):
+                publish.publish_tool(tool_args, token, publish._base_url(self.base))
             publish.publish_tool(tool_args, token, publish._base_url(self.base))
+            tool_path.write_bytes(b"different helper bytes")
+            with self.assertRaisesRegex(RuntimeError, "already published with different bytes"):
+                publish.publish_tool(tool_args, token, publish._base_url(self.base))
             status, _, body = self.request("/v1/tools/logihub/latest")
             self.assertEqual(status, 200)
             self.assertEqual(json.loads(body)["version"], "v0.1.0-test")
