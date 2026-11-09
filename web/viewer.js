@@ -1,6 +1,14 @@
 "use strict";
 
 const profileSelect = document.querySelector("#profile-select");
+const compareSelect = document.querySelector("#compare-select");
+const compareButton = document.querySelector("#compare-button");
+const comparePanel = document.querySelector("#compare-panel");
+const compareTitle = document.querySelector("#compare-title");
+const profileComparison = document.querySelector("#profile-comparison");
+const viewerSearchInput = document.querySelector("#viewer-search-input");
+const viewerSearchSummary = document.querySelector("#viewer-search-summary");
+const historyChangedOnly = document.querySelector("#history-changed-only");
 const refreshButton = document.querySelector("#refresh-button");
 const loadStatus = document.querySelector("#load-status");
 const revisionBanner = document.querySelector("#revision-banner");
@@ -17,6 +25,7 @@ let currentBundle = null;
 let historyCursor = null;
 let historyLoaded = false;
 let viewerSchema = null;
+let historySnapshots = new Map();
 
 function showMessage(target, message) {
   target.replaceChildren();
@@ -51,11 +60,12 @@ function readableValue(value, metadata = null) {
   return metadata?.unit ? `${raw}${metadata.unit}` : raw;
 }
 
-function renderTable(target, entries, omitted = [], section = null) {
+function renderTable(target, entries, omitted = [], section = null, options = {}) {
   target.replaceChildren();
-  const rows = Object.entries(entries || {}).filter(([key]) => !omitted.includes(key));
+  const rows = Object.entries(entries || {}).filter(([key]) => !omitted.includes(key)
+    && (!options.changedKeys || options.changedKeys.has(`${section?.id}:${key}`)));
   if (!rows.length) {
-    showMessage(target, "No settings available.");
+    showMessage(target, options.changedKeys ? "No changed settings in this section." : "No settings available.");
     return;
   }
   const grouped = new Map();
@@ -85,7 +95,7 @@ function renderTable(target, entries, omitted = [], section = null) {
     const row = document.createElement("tr");
     const label = document.createElement("th");
     label.scope = "row";
-    label.textContent = fieldLabel(key);
+    label.textContent = fieldLabel(key, section);
     const cell = document.createElement("td");
     cell.textContent = readableValue(value, metadata);
     row.append(label, cell);
@@ -122,6 +132,30 @@ function renderSettingsSections(bundle, placeholderMessage = null) {
     panel.append(heading, table);
     contentGrid.insertBefore(panel, cfgPanel);
   }
+  applyViewerSearch();
+}
+
+function applyViewerSearch() {
+  const query = viewerSearchInput.value.trim().toLocaleLowerCase();
+  let settingMatches = 0;
+  let cfgMatches = 0;
+  for (const row of contentGrid.querySelectorAll(".schema-panel .settings-table tbody tr")) {
+    const matches = !query || row.textContent.toLocaleLowerCase().includes(query);
+    row.hidden = !matches;
+    if (matches) settingMatches += 1;
+  }
+  for (const table of contentGrid.querySelectorAll(".schema-panel .settings-table")) {
+    table.hidden = [...table.querySelectorAll("tbody tr")].every((row) => row.hidden);
+  }
+  for (const heading of contentGrid.querySelectorAll(".schema-panel .field-group-heading")) {
+    heading.hidden = Boolean(heading.nextElementSibling?.hidden);
+  }
+  for (const line of cfgViewer.querySelectorAll(".cfg-line")) {
+    const matches = !query || line.textContent.toLocaleLowerCase().includes(query);
+    line.hidden = !matches;
+    if (matches) cfgMatches += 1;
+  }
+  viewerSearchSummary.textContent = query ? `${settingMatches} settings · ${cfgMatches} CFG lines` : "";
 }
 
 function appendHighlightedCode(code, line) {
@@ -298,6 +332,20 @@ function renderCfg(content, filename) {
   cfgViewer.append(fragment);
   cfgMeta.textContent = `${lines.length} lines · ${new TextEncoder().encode(content).length.toLocaleString()} bytes`;
   addCfgActions(currentCfgActions, content, filename);
+  applyViewerSearch();
+}
+
+function flattenBundle(bundle) {
+  const values = new Map();
+  for (const section of viewerSchema.sections || []) {
+    const sectionValues = valueAtPath(bundle, section.source) || {};
+    for (const [key, value] of Object.entries(sectionValues)) {
+      if ((section.omit || []).includes(key)) continue;
+      const id = `${section.id}:${key}`;
+      values.set(id, { value, label: `${section.title || "Settings"} · ${fieldLabel(key, section)}`, metadata: fieldMetadata(key, section) });
+    }
+  }
+  return values;
 }
 
 function formatDate(value) {
@@ -308,7 +356,10 @@ function formatDate(value) {
 
 function appendHistoryEntries(payload, profileName) {
   const revisions = Array.isArray(payload?.revisions) ? payload.revisions : [];
-  if (!historyLoaded) profileHistory.replaceChildren();
+  if (!historyLoaded) {
+    profileHistory.replaceChildren();
+    historySnapshots.clear();
+  }
   if (!revisions.length && !historyLoaded) {
     showMessage(profileHistory, "No saved profile revisions are available yet.");
   }
@@ -332,6 +383,7 @@ function appendHistoryEntries(payload, profileName) {
         const response = await fetch(`/v1/profiles/${encodeURIComponent(profileName)}/history/${entry.revision}`, { cache: "no-store", headers: { Accept: "application/json" } });
         const snapshot = await readResponse(response, "Profile history");
         if (profileSelect.value !== profileName || !currentBundle || !profileHistory.contains(details)) return;
+        historySnapshots.set(details, snapshot);
         renderHistoricalBundle(content, snapshot);
         details.dataset.loaded = "true";
       } catch (error) {
@@ -355,18 +407,6 @@ function renderHistoricalBundle(target, snapshot) {
   heading.className = "small-meta snapshot-meta";
   heading.textContent = `Saved ${formatDate(snapshot.createdUtc)} · revision ${snapshot.revision} · current revision ${currentRevision}`;
   target.append(heading);
-  const flattenBundle = (bundle) => {
-    const values = new Map();
-    for (const section of viewerSchema.sections || []) {
-      const sectionValues = valueAtPath(bundle, section.source) || {};
-      for (const [key, value] of Object.entries(sectionValues)) {
-        if ((section.omit || []).includes(key)) continue;
-        const id = `${section.id}:${key}`;
-        values.set(id, { value, label: `${section.title || "Settings"} · ${fieldLabel(key, section)}`, metadata: fieldMetadata(key, section) });
-      }
-    }
-    return values;
-  };
   const currentValues = flattenBundle(currentBundle);
   const historicalValues = flattenBundle(snapshot);
   const changedKeys = [...new Set([...currentValues.keys(), ...historicalValues.keys()])]
@@ -423,7 +463,9 @@ function renderHistoricalBundle(target, snapshot) {
     heading.textContent = section.title || "Settings";
     const table = document.createElement("div");
     table.className = "table-wrap";
-    renderTable(table, valueAtPath(snapshot, section.source), section.omit || [], section);
+    renderTable(table, valueAtPath(snapshot, section.source), section.omit || [], section, {
+      changedKeys: historyChangedOnly.checked ? new Set(changedKeys) : null,
+    });
     target.append(heading, table);
   }
   const savedDetails = document.createElement("details");
@@ -442,6 +484,106 @@ async function readResponse(response, label, asText = false) {
   return asText ? response.text() : response.json();
 }
 
+async function fetchProfileBundle(profileName, cfgName) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const [profileResponse, graphicsResponse, cfgResponse] = await Promise.all([
+      fetch(`/v1/profiles/${encodeURIComponent(profileName)}`, { cache: "no-store", headers: { Accept: "application/json" } }),
+      fetch(`/v1/graphics/${encodeURIComponent(profileName)}`, { cache: "no-store", headers: { Accept: "application/json" } }),
+      fetch(`/v1/cfg/${encodeURIComponent(cfgName)}`, { cache: "no-store", headers: { Accept: "text/plain" } }),
+    ]);
+    const [profile, graphics, cfg] = await Promise.all([
+      readResponse(profileResponse, "Profile"),
+      readResponse(graphicsResponse, "Graphics"),
+      readResponse(cfgResponse, "CFG", true),
+    ]);
+    const revisions = [profileResponse, graphicsResponse, cfgResponse].map((response) => response.headers.get("X-Profile-Revision"));
+    if (revisions[0] && revisions.every((revision) => revision === revisions[0])) {
+      return { profile, graphics, cfg, revision: revisions[0] };
+    }
+  }
+  throw new Error("The profile changed while it was loading. Try again.");
+}
+
+function renderProfileComparison(otherProfile, otherBundle) {
+  const currentProfile = profileSelect.value;
+  compareTitle.textContent = `${currentProfile} vs ${otherProfile}`;
+  profileComparison.replaceChildren();
+  const currentValues = flattenBundle(currentBundle);
+  const otherValues = flattenBundle(otherBundle);
+  const changedKeys = [...new Set([...currentValues.keys(), ...otherValues.keys()])]
+    .filter((key) => JSON.stringify(currentValues.get(key)?.value) !== JSON.stringify(otherValues.get(key)?.value));
+  if (!changedKeys.length) {
+    showMessage(profileComparison, "These profiles have matching settings and graphics values.");
+  } else {
+    const table = document.createElement("table");
+    table.className = "settings-table comparison-table";
+    const head = document.createElement("thead");
+    const headerRow = document.createElement("tr");
+    for (const label of ["Setting", currentProfile, otherProfile]) {
+      const cell = document.createElement("th");
+      cell.scope = "col";
+      cell.textContent = label;
+      headerRow.append(cell);
+    }
+    head.append(headerRow);
+    const body = document.createElement("tbody");
+    for (const key of changedKeys) {
+      const current = currentValues.get(key);
+      const other = otherValues.get(key);
+      const row = document.createElement("tr");
+      const label = document.createElement("th");
+      label.scope = "row";
+      label.textContent = current?.label || other?.label || key;
+      const currentCell = document.createElement("td");
+      currentCell.textContent = readableValue(current?.value, current?.metadata);
+      const otherCell = document.createElement("td");
+      otherCell.textContent = readableValue(other?.value, other?.metadata);
+      row.append(label, currentCell, otherCell);
+      body.append(row);
+    }
+    table.append(head, body);
+    profileComparison.append(table);
+  }
+  const cfgChanged = String(currentBundle.cfg ?? "") !== String(otherBundle.cfg ?? "");
+  const cfgStatus = document.createElement("p");
+  cfgStatus.className = cfgChanged ? "history-change-status" : "muted";
+  cfgStatus.textContent = cfgChanged ? "CFG differences (red is current profile, green is compared profile):" : "The CFG files match.";
+  profileComparison.append(cfgStatus);
+  if (cfgChanged) renderCfgDiff(profileComparison, currentBundle.cfg ?? "", otherBundle.cfg ?? "");
+  comparePanel.hidden = false;
+}
+
+function refreshCompareOptions() {
+  const current = profileSelect.value;
+  for (const option of compareSelect.options) {
+    if (option.value) option.disabled = option.value === current;
+  }
+  if (compareSelect.value === current) compareSelect.value = "";
+  compareSelect.disabled = !currentBundle || compareSelect.options.length <= 1;
+  compareButton.disabled = !currentBundle || !compareSelect.value;
+}
+
+async function compareSelectedProfile() {
+  const otherProfile = compareSelect.value;
+  const option = [...compareSelect.options].find((item) => item.value === otherProfile);
+  if (!currentBundle || !option || otherProfile === profileSelect.value) return;
+  const currentProfile = profileSelect.value;
+  const currentRevision = currentBundle.revision;
+  compareButton.disabled = true;
+  compareTitle.textContent = `Loading ${otherProfile}…`;
+  comparePanel.hidden = false;
+  profileComparison.replaceChildren();
+  try {
+    const otherBundle = await fetchProfileBundle(otherProfile, option.dataset.cfg);
+    if (profileSelect.value !== currentProfile || currentBundle?.revision !== currentRevision || compareSelect.value !== otherProfile) return;
+    renderProfileComparison(otherProfile, otherBundle);
+  } catch (error) {
+    if (profileSelect.value === currentProfile) showMessage(profileComparison, `Could not compare profiles: ${error.message}`);
+  } finally {
+    refreshCompareOptions();
+  }
+}
+
 async function loadProfile() {
   const profileName = profileSelect.value;
   const option = profileSelect.selectedOptions[0];
@@ -449,11 +591,15 @@ async function loadProfile() {
   if (!profileName || !cfgName) return;
   refreshButton.disabled = true;
   profileSelect.disabled = true;
+  comparePanel.hidden = true;
+  compareButton.disabled = true;
   loadStatus.dataset.state = "loading";
   loadStatus.textContent = `Loading ${profileName} from the backend…`;
   revisionBanner.hidden = true;
   currentBundle = null;
   historyLoaded = false;
+  historySnapshots.clear();
+  historyChangedOnly.checked = false;
   historyCursor = null;
   loadMoreHistoryButton.hidden = true;
   loadHistoryButton.textContent = "Load history";
@@ -466,25 +612,7 @@ async function loadProfile() {
   currentCfgActions.replaceChildren();
 
   try {
-    let bundle;
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const [profileResponse, graphicsResponse, cfgResponse] = await Promise.all([
-        fetch(`/v1/profiles/${encodeURIComponent(profileName)}`, { cache: "no-store", headers: { Accept: "application/json" } }),
-        fetch(`/v1/graphics/${encodeURIComponent(profileName)}`, { cache: "no-store", headers: { Accept: "application/json" } }),
-        fetch(`/v1/cfg/${encodeURIComponent(cfgName)}`, { cache: "no-store", headers: { Accept: "text/plain" } }),
-      ]);
-      const [profile, graphics, cfg] = await Promise.all([
-        readResponse(profileResponse, "Profile"),
-        readResponse(graphicsResponse, "Graphics"),
-        readResponse(cfgResponse, "CFG", true),
-      ]);
-      const revisions = [profileResponse, graphicsResponse, cfgResponse].map((response) => response.headers.get("X-Profile-Revision"));
-      if (revisions[0] && revisions.every((revision) => revision === revisions[0])) {
-        bundle = { profile, graphics, cfg, revision: revisions[0] };
-        break;
-      }
-    }
-    if (!bundle) throw new Error("The profile changed while it was loading. Press Refresh to try again.");
+    const bundle = await fetchProfileBundle(profileName, cfgName);
     currentBundle = bundle;
 
     renderSettingsSections(bundle);
@@ -505,6 +633,7 @@ async function loadProfile() {
   } finally {
     refreshButton.disabled = false;
     profileSelect.disabled = false;
+    refreshCompareOptions();
   }
 }
 
@@ -540,6 +669,15 @@ async function loadHistory(beforeRevision = null) {
 
 loadHistoryButton.addEventListener("click", () => loadHistory());
 loadMoreHistoryButton.addEventListener("click", () => loadHistory(historyCursor));
+compareButton.addEventListener("click", compareSelectedProfile);
+compareSelect.addEventListener("change", refreshCompareOptions);
+historyChangedOnly.addEventListener("change", () => {
+  for (const details of profileHistory.querySelectorAll(".history-entry[open]")) {
+    const snapshot = historySnapshots.get(details);
+    if (snapshot) renderHistoricalBundle(details.querySelector(".history-snapshot"), snapshot);
+  }
+});
+viewerSearchInput.addEventListener("input", applyViewerSearch);
 
 async function initializeViewer() {
   refreshButton.disabled = true;
@@ -556,6 +694,11 @@ async function initializeViewer() {
       option.dataset.cfg = profile.cfg;
       option.textContent = profile.name;
       profileSelect.append(option);
+      const comparisonOption = document.createElement("option");
+      comparisonOption.value = profile.name;
+      comparisonOption.dataset.cfg = profile.cfg;
+      comparisonOption.textContent = profile.name;
+      compareSelect.append(comparisonOption);
     }
     if (!profileSelect.options.length) throw new Error("The viewer schema contains no profiles.");
     await loadProfile();

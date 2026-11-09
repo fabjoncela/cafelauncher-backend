@@ -39,6 +39,29 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
+def _relative_age(value: str | None) -> str:
+    if not value:
+        return ""
+    try:
+        saved_at = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if saved_at.tzinfo is None:
+            saved_at = saved_at.replace(tzinfo=timezone.utc)
+        seconds = max(0, int((datetime.now(timezone.utc) - saved_at.astimezone(timezone.utc)).total_seconds()))
+    except (AttributeError, ValueError):
+        return "age unavailable"
+    if seconds < 60:
+        return "just now"
+    if seconds < 3600:
+        amount, unit = seconds // 60, "minute"
+    elif seconds < 86400:
+        amount, unit = seconds // 3600, "hour"
+    elif seconds < 86400 * 30:
+        amount, unit = seconds // 86400, "day"
+    else:
+        amount, unit = seconds // (86400 * 30), "month"
+    return f"{amount} {unit}{'' if amount == 1 else 's'} ago"
+
+
 def _launcher_version_key(version: str) -> tuple[int, int, int, int]:
     return tuple(int(part) for part in version.split("."))
 
@@ -296,6 +319,7 @@ class ApiHandler(BaseHTTPRequestHandler):
             "viewer.css": ("viewer.css", "text/css; charset=utf-8"),
             "viewer.js": ("viewer.js", "text/javascript; charset=utf-8"),
             "status.css": ("status.css", "text/css; charset=utf-8"),
+            "status.js": ("status.js", "text/javascript; charset=utf-8"),
         }
         asset = assets.get(asset_name)
         if asset is None:
@@ -320,7 +344,7 @@ class ApiHandler(BaseHTTPRequestHandler):
         parsed = urlsplit(self.path)
         parts = [unquote(part) for part in parsed.path.strip("/").split("/") if part]
 
-        if len(parts) == 1 and parts[0] in ("viewer", "viewer.css", "viewer.js", "status.css"):
+        if len(parts) == 1 and parts[0] in ("viewer", "viewer.css", "viewer.js", "status.css", "status.js"):
             self._send_viewer_asset(parts[0])
             return
 
@@ -381,13 +405,14 @@ class ApiHandler(BaseHTTPRequestHandler):
                 deployment_label = "Deployment revision"
             mirror_time = (
                 f'<time datetime="{html.escape(last_success_utc, quote=True)}">'
-                f'{html.escape(last_success_utc.removesuffix("Z"))} UTC</time>'
+                f'{html.escape(last_success_utc.removesuffix("Z"))} UTC</time> '
+                f'<span class="relative-age">({html.escape(_relative_age(last_success_utc))})</span>'
                 if last_success_utc else "No successful sync yet"
             )
             release_value = html.escape(latest_release) if latest_release else "No backend-hosted package published yet"
             body = f"""<!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>CafeLauncher Backend Status</title><link rel="stylesheet" href="/status.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>CafeLauncher Backend Status</title><link rel="stylesheet" href="/status.css"><script src="/status.js" defer></script></head>
 <body>
 <header class="site-header">
   <div><p class="eyebrow">CAFE LAUNCHER · PUBLIC SERVICE</p><h1>Backend status</h1>
@@ -408,6 +433,8 @@ class ApiHandler(BaseHTTPRequestHandler):
     <a href="https://github.com/fabjoncela/cafelauncher-backend#api-contract">API documentation</a>
     <a href="/v1/health">Health JSON</a>
     <a href="https://github.com/fabjoncela/cafelauncher-backend-mirror/blob/main/mirror-manifest.json">Mirror manifest</a>
+    <button id="copy-diagnostics" type="button">Copy diagnostics</button>
+    <span id="copy-diagnostics-status" class="copy-status" role="status" aria-live="polite"></span>
   </nav>
   <footer class="deployment-info"><span>{deployment_label}: {deployment_value}</span></footer>
 </main>

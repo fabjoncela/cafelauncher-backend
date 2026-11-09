@@ -12,7 +12,7 @@ The service provides anonymous read endpoints for profile bundles and release as
 - Twenty-five standard-library unit and HTTP integration tests cover validation, import, CFG serving, backup, sync conflicts/history, publishing retries, staged-release cleanup, asset integrity, and GitHub mirror ref-conflict/restart recovery.
 - `github_mirror.py` publishes an atomic public GitHub snapshot and keeps a durable SQLite generation marker for restart-safe retries.
 - CafeLauncher uses this API as its primary profile, graphics, CFG, and graphics-history source. When the API is unavailable, the launcher can read the public GitHub mirror; pending client edits remain local until the API returns.
-- The backend's root page is a responsive status dashboard with API health, profile count, latest profile save, mirror generation and last successful sync, backend-hosted releases, and deployed commit. It notes that the current launcher updater uses `Cs-script` on GitHub and links to API docs, health JSON, the public mirror manifest, and the read-only profile viewer at `/viewer`.
+- The backend's root page is a responsive status dashboard with API health, profile count, latest profile save, mirror generation and last successful sync with relative age, backend-hosted releases, and deployed commit. It includes a copyable diagnostics summary, notes that the current launcher updater uses `Cs-script` on GitHub, and links to API docs, health JSON, the public mirror manifest, and the read-only profile viewer at `/viewer`.
 - The backend is deployed on the Ubuntu server as two `systemd` services, with SQLite/assets under `/var/lib/cafelauncher-backend` and the API bound to `127.0.0.1:8090`. Its public HTTPS path is provided by the existing Tailscale Funnel route; see [`deploy/DEPLOYMENT.md`](deploy/DEPLOYMENT.md).
 - `.github/workflows/backend-ci-deploy.yml` runs tests on Python 3.10 and 3.14, then deploys successful `main` pushes through the dedicated server runner.
 - Backend CI checks viewer metadata against the current CafeLauncher source. CafeLauncher CI runs the same parity check when profile, graphics, or launcher schema files change. Launcher-supported fields and profiles must exist in the backend; the backend may add metadata before the matching launcher feature merges.
@@ -44,7 +44,7 @@ The server requires two different tokens at startup: one for profile sync and on
 
 ### Public reads
 
-The browser viewer at `/viewer` presents current profile values, graphics settings, and CFG text. Its “Profile saves” history lists every saved bundle revision and lazily displays the profile, graphics, and CFG values from that same save. It is read-only and requests the `/v1` endpoints listed below from the backend host.
+The browser viewer at `/viewer` presents current profile values, graphics settings, and CFG text. Search filters current setting rows and CFG lines; profile comparison loads a consistent backend snapshot and displays only differences. Its “Profile saves” history lists every saved bundle revision and lazily displays the profile, graphics, and CFG values from that same save, with an option to filter unchanged profile/graphics values. It is read-only and requests the `/v1` endpoints listed below from the backend host.
 
 | Method and route | Response |
 | --- | --- |

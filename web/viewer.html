@@ -25,12 +25,27 @@
         <option value="">Loading profiles…</option>
       </select>
       <button id="refresh-button" type="button">Refresh</button>
+      <label for="compare-select">Compare with</label>
+      <select id="compare-select" disabled><option value="">Choose profile</option></select>
+      <button id="compare-button" type="button" disabled>Compare</button>
       <p id="load-status" class="load-status" role="status" aria-live="polite">Loading backend data…</p>
+    </section>
+
+    <section class="viewer-search" aria-label="Search current profile">
+      <label for="viewer-search-input">Find in current profile</label>
+      <input id="viewer-search-input" type="search" placeholder="Search setting names, values, or CFG commands">
+      <span id="viewer-search-summary" class="small-meta" aria-live="polite"></span>
     </section>
 
     <div id="revision-banner" class="revision-banner" hidden></div>
 
     <div id="content-grid" class="content-grid">
+      <section id="compare-panel" class="panel compare-panel" hidden>
+        <div class="panel-heading">
+          <div><p class="eyebrow">PROFILE COMPARISON</p><h2 id="compare-title">Profile differences</h2></div>
+        </div>
+        <div id="profile-comparison"></div>
+      </section>
       <section id="cfg-panel" class="panel cfg-panel">
         <div class="panel-heading">
           <div><p class="eyebrow">COUNTER-STRIKE 2</p><h2 id="cfg-title">Profile CFG</h2></div>
@@ -46,6 +61,7 @@
           <span class="small-meta">Most recent first</span>
         </div>
         <p class="muted history-description">Each saved revision keeps that profile’s settings, graphics settings, and CFG together.</p>
+        <label class="history-filter"><input id="history-changed-only" type="checkbox"> Show only changed profile and graphics settings</label>
         <button id="load-history-button" type="button">Load history</button>
         <div id="profile-history" class="history-list"><p class="muted">Choose “Load history” to view saved revisions.</p></div>
         <button id="load-more-history" type="button" hidden>Load older revisions</button>

@@ -358,6 +358,8 @@ class ApiTests(unittest.TestCase):
         self.assertIn(b'href="/viewer"', home)
         self.assertIn(b"Service healthy", home)
         self.assertIn(b"Last successful sync:", home)
+        self.assertIn(b"Copy diagnostics", home)
+        self.assertIn(b"/status.js", home)
         self.assertIn(b"No backend-hosted package published yet", home)
         self.assertIn(b"Backend-hosted release", home)
         self.assertIn(b"The launcher currently auto-updates from Cs-script on GitHub.", home)
@@ -371,6 +373,10 @@ class ApiTests(unittest.TestCase):
         self.assertIn("default-src 'none'", headers["Content-Security-Policy"])
         self.assertIn(b'<select id="profile-select">', page)
         self.assertIn(b"Loading profiles", page)
+        self.assertIn(b'id="viewer-search-input"', page)
+        self.assertIn(b'id="compare-select"', page)
+        self.assertIn(b'id="history-changed-only"', page)
+        self.assertIn(b"Show only changed profile and graphics settings", page)
         self.assertIn(b">Profile saves<", page)
         self.assertIn(b'id="load-history-button"', page)
 
@@ -378,6 +384,7 @@ class ApiTests(unittest.TestCase):
             ("/viewer.css", "text/css"),
             ("/viewer.js", "text/javascript"),
             ("/status.css", "text/css"),
+            ("/status.js", "text/javascript"),
         ):
             with self.subTest(path=path):
                 status, headers, body = self.request(path)
@@ -392,6 +399,9 @@ class ApiTests(unittest.TestCase):
                     self.assertIn(b"Copy saved CFG", body)
                     self.assertIn(b"Download saved CFG", body)
                     self.assertIn(b"current-cfg-actions", body)
+                    self.assertIn(b"renderProfileComparison", body)
+                if path == "/status.js":
+                    self.assertIn(b"copyDiagnostics", body)
 
         status, headers, body = self.request("/v1/viewer-schema")
         self.assertEqual(status, 200)

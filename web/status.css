@@ -39,11 +39,14 @@ h1 { margin-bottom: 5px; font-size: clamp(28px, 4vw, 38px); letter-spacing: -.03
 .card-detail { margin: 4px 0 0; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 .release-value { font-size: clamp(16px, 2.4vw, 21px); }
 .quick-links { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
-.quick-links a { display: inline-flex; align-items: center; min-height: 40px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); text-decoration: none; }
-.quick-links a:hover { border-color: var(--accent); background: var(--panel-raised); }
+.quick-links a, .quick-links button { display: inline-flex; align-items: center; min-height: 40px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text); font: inherit; text-decoration: none; cursor: pointer; }
+.quick-links a:hover, .quick-links button:hover { border-color: var(--accent); background: var(--panel-raised); }
 .quick-links .primary-link { border-color: #385e87; background: #18304a; color: #d9ebff; font-weight: 650; }
 .deployment-info { margin: 27px 0 36px; padding-top: 13px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; }
 .deployment-info a { font-family: Consolas, "Cascadia Code", monospace; text-decoration: none; }
+.relative-age { color: var(--muted); font-size: 12px; }
+.copy-status { align-self: center; color: var(--green); font-size: 12px; }
+.clipboard-fallback { position: fixed; left: -10000px; top: 0; }
 
 @media (max-width: 640px) {
   .site-header { flex-direction: column; padding-top: 28px; }
