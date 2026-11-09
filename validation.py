@@ -73,6 +73,106 @@ GRAPHICS_REQUIRED_SETTINGS = {
     "ShaderQuality", "ParticleDetail", "AmbientOcclusion", "HDRDetail", "NvidiaReflex", "TextureFiltering",
     "FSRDetail", "VSync", "CMAA",
 }
+
+VIEWER_SECTIONS = [
+    {
+        "id": "profile",
+        "title": "Launcher settings",
+        "eyebrow": "PROFILE",
+        "source": "profile",
+        "omit": ["SchemaVersion", "ProfileName", "CfgDownloadUrl"],
+        "fieldOverrides": {
+            "Width": {"label": "Desktop Resolution Width", "unit": " px"},
+            "Height": {"label": "Desktop Resolution Height", "unit": " px"},
+            "RefreshHz": {"label": "Display Refresh Rate", "unit": " Hz"},
+            "ScalingMode": {"label": "NVIDIA Scaling Mode"},
+        },
+    },
+    {
+        "id": "graphicsPolicy",
+        "title": "Graphics policy",
+        "eyebrow": "CS2 DISPLAY",
+        "source": "graphics",
+        "omit": ["SchemaVersion", "ProfileName", "Settings"],
+        "fieldOverrides": {
+            "ScalingMode": {"label": "CS2 Scaling Mode", "group": "Graphics policy"},
+        },
+    },
+    {
+        "id": "graphicsSettings",
+        "title": "Graphics values",
+        "eyebrow": "CS2 DISPLAY",
+        "source": "graphics.Settings",
+        "omit": [],
+        "fieldOverrides": {
+            "Width": {"label": "CS2 Resolution Width", "unit": " px"},
+            "Height": {"label": "CS2 Resolution Height", "unit": " px"},
+            "RefreshHz": {"label": "CS2 Refresh Rate", "unit": " Hz"},
+        },
+    },
+]
+
+VIEWER_FIELD_METADATA = {
+    "SchemaVersion": {"label": "Schema Version", "group": "Metadata"},
+    "ProfileName": {"label": "Profile Name", "group": "Metadata"},
+    "PointerSpeed": {"label": "Windows Pointer Speed", "group": "Mouse"},
+    "LogitechDPI": {"label": "Logitech DPI", "group": "Mouse"},
+    "DisableAcceleration": {"label": "Disable Pointer Acceleration", "group": "Mouse"},
+    "ApplyNvidia": {"label": "Apply NVIDIA Settings", "group": "NVIDIA and display"},
+    "Width": {"label": "Resolution Width", "group": "Display", "unit": " px"},
+    "Height": {"label": "Resolution Height", "group": "Display", "unit": " px"},
+    "RefreshHz": {"label": "Refresh Rate", "group": "Display", "unit": " Hz"},
+    "Vibrance": {"label": "Digital Vibrance", "group": "NVIDIA and display", "unit": "%"},
+    "Hue": {"label": "NVIDIA Hue", "group": "NVIDIA and display", "values": {"-1": "Driver default"}, "unit": "°"},
+    "ScalingMode": {
+        "label": "Scaling Mode",
+        "group": "NVIDIA and display",
+        "values": {"2": "Stretch to fill", "5": "Keep aspect ratio", "3": "Center without scaling"},
+    },
+    "VoicePushToTalkKey": {"label": "Voice Push-to-Talk Key", "group": "Voice"},
+    "CfgDownloadUrl": {"label": "CFG Download URL", "group": "CS2 config"},
+    "LaunchApps": {"label": "Launch Apps", "group": "Launch actions"},
+    "LaunchWebsiteEnabled": {"label": "Launch Website", "group": "Launch actions"},
+    "LaunchWebsiteUrl": {"label": "Website URL", "group": "Launch actions"},
+    "DisplayPolicy": {"label": "Display Policy", "group": "Graphics policy", "values": {"ApplyPreset": "Apply saved preset", "PreserveCurrent": "Preserve current display"}},
+    "RefreshPolicy": {"label": "Refresh Policy", "group": "Graphics policy", "values": {"Highest": "Highest supported", "Exact": "Use specific Hz"}},
+    "AspectRatioMode": {"label": "Aspect Ratio", "group": "Display", "values": {"0": "4:3", "1": "16:9", "2": "16:10"}},
+    "Fullscreen": {"label": "Display Mode", "group": "Display", "values": {"0": "Windowed", "1": "Fullscreen"}},
+    "MSAASamples": {"label": "Multisampling Anti-Aliasing", "group": "Presets", "values": {"0": "Disabled", "2": "2× MSAA", "4": "4× MSAA", "8": "8× MSAA", "16": "16× MSAA"}},
+    "ShadowQuality": {"label": "Global Shadow Quality", "group": "Presets", "values": {"0": "Low", "1": "Medium", "2": "High", "3": "Very High"}},
+    "DynamicShadows": {"label": "Dynamic Shadows", "group": "Presets", "values": {"0": "Sun Only", "1": "All"}},
+    "TextureDetail": {"label": "Model / Texture Detail", "group": "Presets", "values": {"0": "Low", "1": "Medium", "2": "High", "3": "Very High"}},
+    "ShaderQuality": {"label": "Shader Detail", "group": "Presets", "values": {"0": "Low", "1": "High", "2": "Very High"}},
+    "ParticleDetail": {"label": "Particle Detail", "group": "Presets", "values": {"0": "Low", "1": "Medium", "2": "High", "3": "Very High"}},
+    "AmbientOcclusion": {"label": "Ambient Occlusion", "group": "Presets", "values": {"0": "Disabled", "1": "Legacy value 1", "2": "Medium", "3": "High"}},
+    "HDRDetail": {"label": "High Dynamic Range", "group": "Presets", "values": {"-1": "Quality", "0": "Legacy value 0", "1": "Legacy value 1", "2": "Legacy value 2", "3": "Performance"}},
+    "NvidiaReflex": {"label": "NVIDIA Reflex Low Latency", "group": "Frame pacing", "values": {"0": "Disabled", "1": "Enabled", "2": "Enabled + Boost"}},
+    "TextureFiltering": {"label": "Texture Filtering", "group": "Presets", "values": {"0": "Bilinear", "1": "Trilinear", "2": "Anisotropic 2×", "3": "Anisotropic 4×", "4": "Anisotropic 8×", "5": "Anisotropic 16×"}},
+    "FSRDetail": {"label": "FidelityFX Super Resolution", "group": "Presets", "values": {"0": "Disabled", "1": "Performance", "2": "Balanced", "3": "Quality", "4": "Ultra Quality"}},
+    "VSync": {"label": "Vertical Sync", "group": "Frame pacing", "values": {"0": "Disabled", "1": "Enabled"}},
+    "CMAA": {"label": "CMAA2", "group": "Presets", "values": {"0": "Disabled", "1": "Enabled"}},
+}
+
+VIEWER_GROUP_ORDER = [
+    "Mouse", "NVIDIA and display", "Display", "Voice", "CS2 config", "Launch actions",
+    "Graphics policy", "Frame pacing", "Presets", "Metadata",
+]
+
+
+def viewer_schema() -> dict:
+    """Return display metadata for the read-only browser viewer."""
+    return {
+        "version": 1,
+        "profiles": [
+            {"name": name, "cfg": cfg}
+            for name, cfg in PROFILE_CFG_FILES.items()
+        ],
+        "sections": VIEWER_SECTIONS,
+        "groups": VIEWER_GROUP_ORDER,
+        "fields": VIEWER_FIELD_METADATA,
+    }
+
+
 SENSITIVITY_LINE = re.compile(r"^[ \t]*sensitivity\b[^\r\n]*", re.IGNORECASE)
 SENSITIVITY_VALUE = re.compile(
     r'^[ \t]*sensitivity[ \t]+(?:"(?P<quoted>[^"\r\n]+)"|(?P<plain>[^ \t\r\n]+))[ \t]*(?://[^\r\n]*)?$',

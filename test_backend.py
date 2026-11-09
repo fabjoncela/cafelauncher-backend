@@ -360,8 +360,8 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("text/html", headers["Content-Type"])
         self.assertIn("default-src 'none'", headers["Content-Security-Policy"])
-        self.assertIn(b'data-cfg="fab.cfg">FabMode</option>', page)
-        self.assertIn(b'data-cfg="prov.cfg">Provmode</option>', page)
+        self.assertIn(b'<select id="profile-select">', page)
+        self.assertIn(b"Loading profiles", page)
         self.assertIn(b">Profile saves<", page)
         self.assertIn(b'id="load-history-button"', page)
 
@@ -374,6 +374,17 @@ class ApiTests(unittest.TestCase):
                 if path == "/viewer.js":
                     self.assertIn(b"/v1/profiles/${encodeURIComponent(profileName)}/history?", body)
                     self.assertIn(b"Changes vs current", body)
+                    self.assertIn(b"/v1/viewer-schema", body)
+
+        status, headers, body = self.request("/v1/viewer-schema")
+        self.assertEqual(status, 200)
+        self.assertIn("application/json", headers["Content-Type"])
+        self.assertEqual(headers["Cache-Control"], "no-cache")
+        schema = json.loads(body)
+        self.assertEqual(schema["version"], 1)
+        self.assertEqual(schema["profiles"][-1], {"name": "Provmode", "cfg": "prov.cfg"})
+        self.assertIn("graphicsSettings", {section["id"] for section in schema["sections"]})
+        self.assertEqual(schema["fields"]["NvidiaReflex"]["values"]["2"], "Enabled + Boost")
 
     def test_health_reports_database_unavailable(self) -> None:
         with patch.object(server, "_connect", side_effect=sqlite3.OperationalError("simulated storage outage")):

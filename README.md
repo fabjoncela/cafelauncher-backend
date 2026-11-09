@@ -15,6 +15,7 @@ The prototype provides anonymous read endpoints for profile bundles and release 
 - The backend's root page shows service status. A read-only settings viewer is available at `/viewer`; it reads current settings and complete profile/graphics/CFG revision history from this API.
 - The backend is deployed on the Ubuntu server as two `systemd` services, with SQLite/assets under `/var/lib/cafelauncher-backend` and the API bound to `127.0.0.1:8090`. Its public HTTPS path is provided by the existing Tailscale Funnel route; see [`deploy/DEPLOYMENT.md`](deploy/DEPLOYMENT.md).
 - `.github/workflows/backend-ci-deploy.yml` runs tests on Python 3.10 and 3.14, then deploys successful `main` pushes through the dedicated server runner. The runner and server bootstrap are active; the first successful automated deployment completed at commit `161f633`.
+- Backend CI checks viewer metadata against the current CafeLauncher source. CafeLauncher CI runs the same parity check when profile, graphics, or launcher schema files change. Launcher-supported fields and profiles must exist in the backend; the backend may add metadata before the matching launcher feature merges.
 - Keep the API validation rules aligned with the deployed CafeLauncher client; profile writes require a backend sync token and use revision checks.
 
 ## Run locally on Windows
@@ -48,6 +49,7 @@ The browser viewer at `/viewer` presents current profile values, graphics settin
 | Method and route | Response |
 | --- | --- |
 | `GET /v1/health` | Service status and prototype version; returns `503` if SQLite storage is unavailable. |
+| `GET /v1/viewer-schema` | Profile/CFG choices, viewer sections, field labels/groups, and enum labels used by `/viewer`. |
 | `GET /v1/profiles/{name}` | Latest profile JSON. |
 | `GET /v1/graphics/{name}` | Latest graphics preset JSON. |
 | `GET /v1/cfg/{filename}` | Latest CFG as UTF-8 text, such as `fab.cfg`. |
@@ -61,6 +63,8 @@ The browser viewer at `/viewer` presents current profile values, graphics settin
 | `GET /v1/tools/logihub/{version}` | Immutable mirrored Logitech helper asset. |
 
 Profile, graphics, and CFG reads include an `ETag` and `X-Profile-Revision`. Mutable reads use `Cache-Control: no-cache`.
+
+The viewer fetches `/v1/viewer-schema` before loading profile data. The backend derives profile choices from its profile-to-CFG registry and serves display metadata alongside the API contract. Settings fields are rendered from API values and schema sections; field groups, friendly labels, and known enum values come from that metadata. If a launcher field or supported enum changes, update the backend validation and viewer metadata together.
 
 ### Profile sync
 

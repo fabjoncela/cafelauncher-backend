@@ -104,6 +104,8 @@ button:disabled { cursor: wait; opacity: .62; }
 .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 15px; }
 .panel-heading .eyebrow { margin-bottom: 2px; }
 .subsection-title { margin: 17px 0 7px; color: var(--muted); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; }
+.field-group-heading { margin: 12px 0 3px; color: var(--muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+.field-group-heading:first-child { margin-top: 0; }
 .small-meta { color: var(--muted); font-size: 12px; text-align: right; }
 .cfg-panel, .history-panel { grid-column: 1 / -1; }
 

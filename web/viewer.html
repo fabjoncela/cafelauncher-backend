@@ -22,7 +22,7 @@
     <section class="toolbar" aria-label="Choose a profile">
       <label for="profile-select">Profile</label>
       <select id="profile-select">
-        <!-- PROFILE_OPTIONS -->
+        <option value="">Loading profiles…</option>
       </select>
       <button id="refresh-button" type="button">Refresh</button>
       <p id="load-status" class="load-status" role="status" aria-live="polite">Loading backend data…</p>
@@ -30,20 +30,8 @@
 
     <div id="revision-banner" class="revision-banner" hidden></div>
 
-    <div class="content-grid">
-      <section class="panel">
-        <div class="panel-heading"><div><p class="eyebrow">PROFILE</p><h2>Launcher settings</h2></div></div>
-        <div id="profile-settings" class="table-wrap"><p class="muted">Waiting for data…</p></div>
-      </section>
-
-      <section class="panel">
-        <div class="panel-heading"><div><p class="eyebrow">CS2 DISPLAY</p><h2>Graphics settings</h2></div></div>
-        <div id="graphics-policy" class="table-wrap"></div>
-        <h3 class="subsection-title">Graphics values</h3>
-        <div id="graphics-settings" class="table-wrap"><p class="muted">Waiting for data…</p></div>
-      </section>
-
-      <section class="panel cfg-panel">
+    <div id="content-grid" class="content-grid">
+      <section id="cfg-panel" class="panel cfg-panel">
         <div class="panel-heading">
           <div><p class="eyebrow">COUNTER-STRIKE 2</p><h2 id="cfg-title">Profile CFG</h2></div>
           <span id="cfg-meta" class="small-meta"></span>

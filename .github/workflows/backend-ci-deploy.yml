@@ -22,12 +22,19 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v7
+      - name: Check out CafeLauncher
+        uses: actions/checkout@v7
+        with:
+          repository: fabjoncela/Cs-script
+          path: launcher
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       - name: Run backend tests
         run: python -m unittest -v test_backend
+      - name: Check viewer and launcher schema parity
+        run: python tools/check_launcher_schema.py --launcher-root launcher
 
   deploy:
     name: Deploy tested main revision

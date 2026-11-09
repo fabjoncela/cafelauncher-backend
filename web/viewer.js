@@ -4,18 +4,18 @@ const profileSelect = document.querySelector("#profile-select");
 const refreshButton = document.querySelector("#refresh-button");
 const loadStatus = document.querySelector("#load-status");
 const revisionBanner = document.querySelector("#revision-banner");
-const profileSettings = document.querySelector("#profile-settings");
-const graphicsPolicy = document.querySelector("#graphics-policy");
-const graphicsSettings = document.querySelector("#graphics-settings");
 const cfgTitle = document.querySelector("#cfg-title");
 const cfgMeta = document.querySelector("#cfg-meta");
 const cfgViewer = document.querySelector("#cfg-viewer");
 const profileHistory = document.querySelector("#profile-history");
 const loadHistoryButton = document.querySelector("#load-history-button");
 const loadMoreHistoryButton = document.querySelector("#load-more-history");
+const contentGrid = document.querySelector("#content-grid");
+const cfgPanel = document.querySelector("#cfg-panel");
 let currentBundle = null;
 let historyCursor = null;
 let historyLoaded = false;
+let viewerSchema = null;
 
 function showMessage(target, message) {
   target.replaceChildren();
@@ -29,35 +29,98 @@ function readableName(value) {
   return String(value).replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/^./, (letter) => letter.toUpperCase());
 }
 
-function readableValue(value) {
+function fieldMetadata(key, section = null) {
+  return {
+    ...(viewerSchema?.fields?.[key] || { label: readableName(key), group: "Other" }),
+    ...(section?.fieldOverrides?.[key] || {}),
+  };
+}
+
+function fieldLabel(key, section = null) {
+  return fieldMetadata(key, section).label || readableName(key);
+}
+
+function readableValue(value, metadata = null) {
   if (value === null || value === undefined || value === "") return "—";
   if (typeof value === "boolean") return value ? "Yes" : "No";
   if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
+  const raw = String(value);
+  const label = metadata?.values?.[raw];
+  if (label) return label;
+  return metadata?.unit ? `${raw}${metadata.unit}` : raw;
 }
 
-function renderTable(target, entries, omitted = []) {
+function renderTable(target, entries, omitted = [], section = null) {
   target.replaceChildren();
   const rows = Object.entries(entries || {}).filter(([key]) => !omitted.includes(key));
   if (!rows.length) {
     showMessage(target, "No settings available.");
     return;
   }
-  const table = document.createElement("table");
-  table.className = "settings-table";
-  const body = document.createElement("tbody");
+  const grouped = new Map();
   for (const [key, value] of rows) {
+    const metadata = fieldMetadata(key, section);
+    const group = metadata.group || "Other";
+    if (!grouped.has(group)) grouped.set(group, []);
+    grouped.get(group).push([key, value, metadata]);
+  }
+  const groupOrder = viewerSchema?.groups || [];
+  const orderedGroups = [...grouped.keys()].sort((left, right) => {
+    const leftIndex = groupOrder.indexOf(left);
+    const rightIndex = groupOrder.indexOf(right);
+    return (leftIndex < 0 ? groupOrder.length : leftIndex) - (rightIndex < 0 ? groupOrder.length : rightIndex) || left.localeCompare(right);
+  });
+  for (const group of orderedGroups) {
+    if (orderedGroups.length > 1) {
+      const heading = document.createElement("h3");
+      heading.className = "field-group-heading";
+      heading.textContent = group;
+      target.append(heading);
+    }
+    const table = document.createElement("table");
+    table.className = "settings-table";
+    const body = document.createElement("tbody");
+    for (const [key, value, metadata] of grouped.get(group)) {
     const row = document.createElement("tr");
     const label = document.createElement("th");
     label.scope = "row";
-    label.textContent = readableName(key);
+    label.textContent = fieldLabel(key);
     const cell = document.createElement("td");
-    cell.textContent = readableValue(value);
+    cell.textContent = readableValue(value, metadata);
     row.append(label, cell);
     body.append(row);
+    }
+    table.append(body);
+    target.append(table);
   }
-  table.append(body);
-  target.append(table);
+}
+
+function valueAtPath(source, path) {
+  return String(path || "").split(".").filter(Boolean).reduce((value, key) => value?.[key], source);
+}
+
+function renderSettingsSections(bundle, placeholderMessage = null) {
+  for (const oldPanel of contentGrid.querySelectorAll(".schema-panel")) oldPanel.remove();
+  for (const section of viewerSchema.sections || []) {
+    const panel = document.createElement("section");
+    panel.className = "panel schema-panel";
+    const heading = document.createElement("div");
+    heading.className = "panel-heading";
+    const titleGroup = document.createElement("div");
+    const eyebrow = document.createElement("p");
+    eyebrow.className = "eyebrow";
+    eyebrow.textContent = section.eyebrow || "SETTINGS";
+    const title = document.createElement("h2");
+    title.textContent = section.title || "Settings";
+    titleGroup.append(eyebrow, title);
+    heading.append(titleGroup);
+    const table = document.createElement("div");
+    table.className = "table-wrap";
+    if (placeholderMessage) showMessage(table, placeholderMessage);
+    else renderTable(table, valueAtPath(bundle, section.source), section.omit || [], section);
+    panel.append(heading, table);
+    contentGrid.insertBefore(panel, cfgPanel);
+  }
 }
 
 function appendHighlightedCode(code, line) {
@@ -172,18 +235,22 @@ function renderHistoricalBundle(target, snapshot) {
   heading.className = "small-meta snapshot-meta";
   heading.textContent = `Saved ${formatDate(snapshot.createdUtc)} · revision ${snapshot.revision} · current revision ${currentRevision}`;
   target.append(heading);
-  const currentValues = {
-    ...Object.fromEntries(Object.entries(currentBundle.profile || {}).map(([key, value]) => [`Profile · ${readableName(key)}`, value])),
-    ...Object.fromEntries(Object.entries(currentBundle.graphics || {}).filter(([key]) => !["Settings", "SchemaVersion", "ProfileName"].includes(key)).map(([key, value]) => [`Graphics · ${readableName(key)}`, value])),
-    ...Object.fromEntries(Object.entries(currentBundle.graphics?.Settings || {}).map(([key, value]) => [`Graphics · ${readableName(key)}`, value])),
+  const flattenBundle = (bundle) => {
+    const values = new Map();
+    for (const section of viewerSchema.sections || []) {
+      const sectionValues = valueAtPath(bundle, section.source) || {};
+      for (const [key, value] of Object.entries(sectionValues)) {
+        if ((section.omit || []).includes(key)) continue;
+        const id = `${section.id}:${key}`;
+        values.set(id, { value, label: `${section.title || "Settings"} · ${fieldLabel(key, section)}`, metadata: fieldMetadata(key, section) });
+      }
+    }
+    return values;
   };
-  const historicalValues = {
-    ...Object.fromEntries(Object.entries(snapshot.profile || {}).map(([key, value]) => [`Profile · ${readableName(key)}`, value])),
-    ...Object.fromEntries(Object.entries(snapshot.graphics || {}).filter(([key]) => !["Settings", "SchemaVersion", "ProfileName"].includes(key)).map(([key, value]) => [`Graphics · ${readableName(key)}`, value])),
-    ...Object.fromEntries(Object.entries(snapshot.graphics?.Settings || {}).map(([key, value]) => [`Graphics · ${readableName(key)}`, value])),
-  };
-  const changedKeys = [...new Set([...Object.keys(currentValues), ...Object.keys(historicalValues)])]
-    .filter((key) => JSON.stringify(currentValues[key]) !== JSON.stringify(historicalValues[key]));
+  const currentValues = flattenBundle(currentBundle);
+  const historicalValues = flattenBundle(snapshot);
+  const changedKeys = [...new Set([...currentValues.keys(), ...historicalValues.keys()])]
+    .filter((key) => JSON.stringify(currentValues.get(key)?.value) !== JSON.stringify(historicalValues.get(key)?.value));
   const compareHeading = document.createElement("h3");
   compareHeading.className = "snapshot-heading";
   compareHeading.textContent = "Changes vs current";
@@ -193,14 +260,16 @@ function renderHistoricalBundle(target, snapshot) {
     table.className = "settings-table comparison-table";
     const body = document.createElement("tbody");
     for (const key of changedKeys) {
+      const currentValue = currentValues.get(key);
+      const historicalValue = historicalValues.get(key);
       const row = document.createElement("tr");
       const label = document.createElement("th");
       label.scope = "row";
-      label.textContent = key;
+      label.textContent = currentValue?.label || historicalValue?.label || key;
       const current = document.createElement("td");
-      current.textContent = `Current: ${readableValue(currentValues[key])}`;
+      current.textContent = `Current: ${readableValue(currentValue?.value, currentValue?.metadata)}`;
       const saved = document.createElement("td");
-      saved.textContent = `Saved: ${readableValue(historicalValues[key])}`;
+      saved.textContent = `Saved: ${readableValue(historicalValue?.value, historicalValue?.metadata)}`;
       row.append(label, current, saved);
       body.append(row);
     }
@@ -217,18 +286,13 @@ function renderHistoricalBundle(target, snapshot) {
   cfgStatus.className = cfgChanged ? "history-change-status" : "muted";
   cfgStatus.textContent = cfgChanged ? "The saved CFG differs from the current CFG; the saved text is shown below." : "The CFG matches the current revision.";
   target.append(cfgStatus);
-  const sections = [
-    ["Profile settings", snapshot.profile || {}, ["SchemaVersion", "ProfileName", "CfgDownloadUrl"]],
-    ["Graphics policy", Object.fromEntries(Object.entries(snapshot.graphics || {}).filter(([key]) => !["Settings", "SchemaVersion", "ProfileName"].includes(key))), []],
-    ["Graphics values", snapshot.graphics?.Settings || {}, []],
-  ];
-  for (const [title, values, omitted] of sections) {
+  for (const section of viewerSchema.sections || []) {
     const heading = document.createElement("h3");
     heading.className = "snapshot-heading";
-    heading.textContent = title;
+    heading.textContent = section.title || "Settings";
     const table = document.createElement("div");
     table.className = "table-wrap";
-    renderTable(table, values, omitted);
+    renderTable(table, valueAtPath(snapshot, section.source), section.omit || [], section);
     target.append(heading, table);
   }
   const cfgHeading = document.createElement("h3");
@@ -260,9 +324,10 @@ async function loadProfile() {
   historyCursor = null;
   loadMoreHistoryButton.hidden = true;
   loadHistoryButton.textContent = "Load history";
-  for (const target of [profileSettings, graphicsPolicy, graphicsSettings, cfgViewer, profileHistory]) {
+  for (const target of [cfgViewer, profileHistory]) {
     showMessage(target, "Loading…");
   }
+  renderSettingsSections(null, "Loading…");
   cfgTitle.textContent = `${cfgName} CFG`;
   cfgMeta.textContent = "";
 
@@ -288,10 +353,7 @@ async function loadProfile() {
     if (!bundle) throw new Error("The profile changed while it was loading. Press Refresh to try again.");
     currentBundle = bundle;
 
-    renderTable(profileSettings, bundle.profile, ["SchemaVersion", "ProfileName", "CfgDownloadUrl"]);
-    const policy = Object.fromEntries(Object.entries(bundle.graphics).filter(([key]) => !["Settings", "SchemaVersion", "ProfileName"].includes(key)));
-    renderTable(graphicsPolicy, policy);
-    renderTable(graphicsSettings, bundle.graphics.Settings || {});
+    renderSettingsSections(bundle);
     renderCfg(bundle.cfg);
     revisionBanner.textContent = `${profileName} · backend revision ${bundle.revision}`;
     revisionBanner.hidden = false;
@@ -302,11 +364,9 @@ async function loadProfile() {
   } catch (error) {
     loadStatus.dataset.state = "error";
     loadStatus.textContent = `Backend data could not be loaded: ${error.message}`;
-    showMessage(profileSettings, "No profile data loaded.");
-    showMessage(graphicsPolicy, "No graphics data loaded.");
-    showMessage(graphicsSettings, "No graphics data loaded.");
     showMessage(cfgViewer, "No CFG data loaded.");
     showMessage(profileHistory, "Load the current profile before viewing history.");
+    renderSettingsSections(null, "No settings loaded.");
   } finally {
     refreshButton.disabled = false;
     profileSelect.disabled = false;
@@ -343,8 +403,36 @@ async function loadHistory(beforeRevision = null) {
   }
 }
 
-refreshButton.addEventListener("click", loadProfile);
-profileSelect.addEventListener("change", loadProfile);
 loadHistoryButton.addEventListener("click", () => loadHistory());
 loadMoreHistoryButton.addEventListener("click", () => loadHistory(historyCursor));
-loadProfile();
+
+async function initializeViewer() {
+  refreshButton.disabled = true;
+  profileSelect.disabled = true;
+  loadStatus.dataset.state = "loading";
+  loadStatus.textContent = "Loading viewer settings…";
+  try {
+    const response = await fetch("/v1/viewer-schema", { cache: "no-store", headers: { Accept: "application/json" } });
+    viewerSchema = await readResponse(response, "Viewer schema");
+    profileSelect.replaceChildren();
+    for (const profile of viewerSchema.profiles || []) {
+      const option = document.createElement("option");
+      option.value = profile.name;
+      option.dataset.cfg = profile.cfg;
+      option.textContent = profile.name;
+      profileSelect.append(option);
+    }
+    if (!profileSelect.options.length) throw new Error("The viewer schema contains no profiles.");
+    await loadProfile();
+  } catch (error) {
+    loadStatus.dataset.state = "error";
+    loadStatus.textContent = `Viewer settings could not be loaded: ${error.message}`;
+  } finally {
+    refreshButton.disabled = false;
+    profileSelect.disabled = false;
+  }
+}
+
+refreshButton.addEventListener("click", () => viewerSchema ? loadProfile() : initializeViewer());
+profileSelect.addEventListener("change", loadProfile);
+initializeViewer();

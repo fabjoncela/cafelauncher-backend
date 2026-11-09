@@ -19,7 +19,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from validation import PROFILE_CFG_FILES, normalize_graphics, normalize_profile, validate_cfg
+from validation import PROFILE_CFG_FILES, normalize_graphics, normalize_profile, validate_cfg, viewer_schema
 
 
 APP_VERSION = "0.1.0"
@@ -308,12 +308,6 @@ class ApiHandler(BaseHTTPRequestHandler):
             return
         headers = {"Referrer-Policy": "no-referrer"}
         if filename == "viewer.html":
-            options = "".join(
-                f'<option value="{html.escape(name, quote=True)}" data-cfg="{html.escape(cfg, quote=True)}">'
-                f'{html.escape(name)}</option>'
-                for name, cfg in PROFILE_CFG_FILES.items()
-            )
-            body = body.replace(b"<!-- PROFILE_OPTIONS -->", options.encode("utf-8"))
             headers["Content-Security-Policy"] = (
                 "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; "
                 "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
@@ -379,6 +373,10 @@ class ApiHandler(BaseHTTPRequestHandler):
                 self._error(503, "storage_unavailable", "Backend storage is unavailable.")
                 return
             self._send_json(200, {"status": "ok", "version": APP_VERSION}, cache_control="no-store")
+            return
+
+        if parts == ["v1", "viewer-schema"]:
+            self._send_json(200, viewer_schema(), cache_control="no-cache")
             return
 
         if len(parts) == 4 and parts[:2] == ["v1", "profiles"] and parts[3] == "history":
