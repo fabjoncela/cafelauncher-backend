@@ -16,12 +16,15 @@ const downloadActionLogButton = document.querySelector("#download-action-log-but
 const updateRunnerLink = document.querySelector("#update-runner-link");
 const updateRunnerNote = document.querySelector("#update-runner-note");
 const cancelNote = document.querySelector("#cancel-note");
+const currentStepTiming = document.querySelector("#current-step-timing");
 const confirmDialog = document.querySelector("#confirm-dialog");
 const recentStorageKey = "cafelauncher-recent-actions";
 const terminalStates = new Set(["COMPLETED", "PARTIAL", "SKIPPED", "FAILED", "CANCELED", "EXPIRED", "INTERRUPTED"]);
 let csrfToken = "";
 let activeRequest = false;
 let latestActionState = null;
+let displayedProgressEventId = "";
+let displayedProgressStartedAt = 0;
 
 const siteUpdatedTime = document.querySelector("#site-updated");
 if (siteUpdatedTime?.dateTime) {
@@ -243,7 +246,7 @@ function confirmAction(action, profile) {
   const label = actionLabels[action];
   document.querySelector("#confirm-title").textContent = `${label} · ${profile}`;
   const descriptions = {
-    "apply-profile": `CafeLauncher will apply the verified ${profile} profile to this Windows session. This can change mouse and NVIDIA settings, install the profile CFG, open the profile's configured apps, and set supported Logitech live DPI when the mouse is connected.`,
+    "apply-profile": `CafeLauncher will apply the verified ${profile} profile to this Windows session. This can change mouse and NVIDIA settings, install the profile CFG, and set supported Logitech live DPI when the mouse is connected. The web action will not start FACEIT Anti-Cheat, Steam, or other profile apps.`,
     "apply-graphics": `CafeLauncher will apply the verified ${profile} CS2 video settings and supported NVIDIA scaling. CS2 must be closed.`,
     "play-exec": `CafeLauncher will verify the current ${profile} profile and CFG, install the reset baseline and profile CFG, then ask Steam to start CS2.`,
   };
@@ -290,6 +293,7 @@ function renderResult(state) {
       ? "The runner stopped without a final result. The action may have partly changed this PC; check it before retrying."
       : "The runner has not reported a final result yet.";
   document.querySelector("#result-summary").textContent = result?.summary || fallbackSummary;
+  updateLiveActionTimer(state);
 
   const list = document.querySelector("#result-steps");
   list.replaceChildren();
@@ -316,6 +320,31 @@ function renderResult(state) {
     data.hidden = true;
     data.textContent = "";
   }
+}
+
+function updateLiveActionTimer(state) {
+  if (!currentStepTiming) return;
+  if (!state?.requestId || terminalStates.has(state.state)) {
+    currentStepTiming.hidden = true;
+    displayedProgressEventId = "";
+    displayedProgressStartedAt = 0;
+    return;
+  }
+  const events = Array.isArray(state.events) ? state.events : [];
+  const currentEvent = [...events].reverse().find((event) => event?.step);
+  if (!currentEvent?.step) {
+    currentStepTiming.textContent = "Waiting for the runner’s first progress update…";
+    currentStepTiming.hidden = false;
+    return;
+  }
+  const eventId = currentEvent.eventId || `${currentEvent.createdUtc || ""}:${currentEvent.step.name || ""}:${currentEvent.step.status || ""}`;
+  if (eventId !== displayedProgressEventId) {
+    displayedProgressEventId = eventId;
+    displayedProgressStartedAt = performance.now();
+  }
+  const elapsed = formatElapsedMs(performance.now() - displayedProgressStartedAt);
+  currentStepTiming.textContent = `Current stage: ${currentEvent.step.name || "CafeLauncher action"} · ${currentEvent.step.status || "RUNNING"} · ${elapsed}`;
+  currentStepTiming.hidden = false;
 }
 
 function downloadActionLog() {
@@ -557,4 +586,5 @@ document.querySelector("#clear-recent-button").addEventListener("click", () => {
   renderRecentActions();
 });
 renderRecentActions();
+window.setInterval(() => updateLiveActionTimer(latestActionState), 1000);
 initialize();

@@ -27,7 +27,7 @@ from validation import PROFILE_CFG_FILES, normalize_graphics, normalize_profile,
 
 
 APP_VERSION = "0.1.0"
-MIN_WEB_ACTION_RUNNER_VERSION = "0.6.0"
+MIN_WEB_ACTION_RUNNER_VERSION = "0.7.0"
 MAX_SYNC_BYTES = 4 * 1024 * 1024
 MAX_CFG_BYTES = 2 * 1024 * 1024
 MIN_LAUNCHER_BYTES = 10_000

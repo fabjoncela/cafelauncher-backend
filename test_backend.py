@@ -520,6 +520,7 @@ class ApiTests(unittest.TestCase):
         self.assertIn(b'id="apply-graphics-button"', home)
         self.assertIn(b'id="cancel-action-button"', home)
         self.assertIn(b'id="download-action-log-button"', home)
+        self.assertIn(b'id="current-step-timing"', home)
         self.assertIn(b"confirm-dialog", home)
         self.assertIn(b'id="install-heading"', home)
         self.assertIn(b"Download CafeLauncher", home)
@@ -592,6 +593,8 @@ class ApiTests(unittest.TestCase):
                     self.assertIn(b"since previous event", body)
                     self.assertIn(b"Server-observed time to last event", body)
                     self.assertIn(b"formatElapsedMs", body)
+                    self.assertIn(b"updateLiveActionTimer", body)
+                    self.assertIn(b"Current stage:", body)
                 if path == "/status.js":
                     self.assertIn(b"copyDiagnostics", body)
 
@@ -620,7 +623,7 @@ class ApiTests(unittest.TestCase):
 
         capability = base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("=")
         claim_body = json.dumps({
-            "runnerVersion": "0.6.0",
+            "runnerVersion": server.MIN_WEB_ACTION_RUNNER_VERSION,
             "protocolVersion": 1,
             "claimCapability": capability,
         }).encode()
@@ -713,14 +716,14 @@ class ApiTests(unittest.TestCase):
         status, _, claim_error = self.request(
             f"/v1/actions/{request_id}/claim",
             method="POST",
-            body=json.dumps({"runnerVersion": "0.6.0", "protocolVersion": 1, "claimCapability": "A" * 43}).encode(),
+            body=json.dumps({"runnerVersion": server.MIN_WEB_ACTION_RUNNER_VERSION, "protocolVersion": 1, "claimCapability": "A" * 43}).encode(),
         )
         self.assertEqual(status, 409)
         self.assertEqual(json.loads(claim_error)["error"], "action_not_claimable")
 
         running_id, running_cookie, running_csrf = self.create_action("apply-graphics", "FabMode")
         capability = base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("=")
-        claim_body = json.dumps({"runnerVersion": "0.6.0", "protocolVersion": 1, "claimCapability": capability}).encode()
+        claim_body = json.dumps({"runnerVersion": server.MIN_WEB_ACTION_RUNNER_VERSION, "protocolVersion": 1, "claimCapability": capability}).encode()
         status, _, _ = self.request(f"/v1/actions/{running_id}/claim", method="POST", body=claim_body)
         self.assertEqual(status, 200)
         status, _, initial = self.request(
@@ -783,7 +786,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(json.loads(created)["profile"], "FabMode")
 
         capability = base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("=")
-        claim_body = json.dumps({"runnerVersion": "0.6.0", "protocolVersion": 1, "claimCapability": capability}).encode()
+        claim_body = json.dumps({"runnerVersion": server.MIN_WEB_ACTION_RUNNER_VERSION, "protocolVersion": 1, "claimCapability": capability}).encode()
         status, _, _ = self.request(f"/v1/actions/{request_id}/claim", method="POST", body=claim_body)
         self.assertEqual(status, 200)
         status, _, _ = self.request(
@@ -831,7 +834,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(server.ACTION_RESULT_TTL_SECONDS, 180)
         request_id, session_cookie, _csrf = self.create_action("detect-pc")
         capability = base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("=")
-        claim_body = json.dumps({"runnerVersion": "0.6.0", "protocolVersion": 1, "claimCapability": capability}).encode()
+        claim_body = json.dumps({"runnerVersion": server.MIN_WEB_ACTION_RUNNER_VERSION, "protocolVersion": 1, "claimCapability": capability}).encode()
         status, _, _ = self.request(f"/v1/actions/{request_id}/claim", method="POST", body=claim_body)
         self.assertEqual(status, 200)
 
