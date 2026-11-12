@@ -711,6 +711,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(json.loads(accepted)["state"], "INTERRUPTED")
 
     def test_web_action_upload_expiry_becomes_interrupted_and_rejects_late_results(self) -> None:
+        self.assertEqual(server.ACTION_RESULT_TTL_SECONDS, 180)
         request_id, session_cookie, _csrf = self.create_action("detect-pc")
         capability = base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("=")
         claim_body = json.dumps({"runnerVersion": "0.1.0", "protocolVersion": 1, "claimCapability": capability}).encode()
