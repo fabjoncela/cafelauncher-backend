@@ -107,7 +107,7 @@ function confirmAction(action, profile) {
   const label = actionLabels[action];
   document.querySelector("#confirm-title").textContent = `${label} · ${profile}`;
   const descriptions = {
-    "apply-profile": `CafeLauncher will apply the verified ${profile} profile to this Windows session. This can change mouse and NVIDIA settings, install the profile CFG, and open the profile's configured apps. Live Logitech DPI remains in the Windows app.`,
+    "apply-profile": `CafeLauncher will apply the verified ${profile} profile to this Windows session. This can change mouse and NVIDIA settings, install the profile CFG, open the profile's configured apps, and set supported Logitech live DPI when the mouse is connected.`,
     "apply-graphics": `CafeLauncher will apply the verified ${profile} CS2 video settings and supported NVIDIA scaling. CS2 must be closed.`,
     "play-exec": `CafeLauncher will verify the current ${profile} profile and CFG, install the reset baseline and profile CFG, then ask Steam to start CS2.`,
   };
