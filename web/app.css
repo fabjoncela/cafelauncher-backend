@@ -25,7 +25,8 @@ h1, h2, p { margin-top: 0; }
 h1 { margin-bottom: 5px; font-size: clamp(28px, 4vw, 38px); letter-spacing: -.035em; }
 h2 { margin: 0 0 8px; font-size: 21px; }
 .subhead, .panel p { color: var(--muted); }
-.unlock-recovery-button { margin-top: 10px; border-color: #a97822; background: #6a4b13; color: #fff2cf; box-shadow: 0 0 0 2px #6a4b1333; }
+.action-recovery-visible { padding-top: 70px; }
+.unlock-recovery-button { position: fixed; top: max(12px, env(safe-area-inset-top)); left: max(18px, calc((100vw - 960px) / 2)); z-index: 1000; max-width: calc(100vw - 36px); margin: 0; border-color: #a97822; background: #6a4b13; color: #fff2cf; text-align: left; box-shadow: 0 0 0 2px #6a4b1333, 0 8px 24px #0008; }
 .unlock-recovery-button:hover:not(:disabled) { background: #89631b; }
 .unlock-recovery-button:focus-visible { outline: 3px solid var(--amber); outline-offset: 2px; }
 .site-meta { display: grid; justify-items: end; gap: 3px; max-width: 190px; color: var(--muted); font-size: 12px; line-height: 1.35; text-align: right; }

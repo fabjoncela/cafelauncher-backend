@@ -41,6 +41,11 @@ function setServiceStatus(message, kind = "") {
   serviceStatus.dataset.kind = kind;
 }
 
+function setUnlockButtonVisible(visible) {
+  unlockButton.hidden = !visible;
+  document.body.classList.toggle("action-recovery-visible", visible);
+}
+
 function getPendingRequest() {
   try { return sessionStorage.getItem("cafelauncher-action-request") || ""; }
   catch { return ""; }
@@ -439,7 +444,7 @@ async function watchRequest(requestId) {
         document.querySelector("#result-heading").textContent = "Action status unavailable";
         document.querySelector("#result-state").textContent = "CHECK PC";
         document.querySelector("#result-summary").textContent = `${error.message} The action may already have started. Check this PC before trying again.`;
-        unlockButton.hidden = false;
+        setUnlockButtonVisible(true);
         setServiceStatus("The request state is uncertain; action buttons stay disabled to prevent a duplicate run.", "error");
         return false;
       }
@@ -456,7 +461,7 @@ async function watchRequest(requestId) {
       recordRecentAction(state);
       if (state.state === "INTERRUPTED" || state.result?.data?.executionOutcomeKnown === false) {
         setServiceStatus("The action may have changed this PC without a confirmed result. Check it before allowing another action.", "error");
-        unlockButton.hidden = false;
+        setUnlockButtonVisible(true);
         return false;
       }
       const statusText = `Action finished: ${state.state}.`;
@@ -506,7 +511,7 @@ downloadActionLogButton.addEventListener("click", downloadActionLog);
 unlockButton.addEventListener("click", () => {
   clearPendingRequest();
   activeRequest = false;
-  unlockButton.hidden = true;
+  setUnlockButtonVisible(false);
   setActionsDisabled(false);
   profileSelect.disabled = false;
   setServiceStatus("You confirmed this PC is ready for another action.", "ready");
