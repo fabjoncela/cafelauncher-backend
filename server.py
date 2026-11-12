@@ -189,6 +189,8 @@ def _initialize() -> None:
                 upload_expires_at REAL,
                 claim_capability_hash TEXT,
                 runner_version TEXT,
+                cancel_requested INTEGER NOT NULL DEFAULT 0,
+                cancel_requested_utc TEXT,
                 events_json TEXT NOT NULL,
                 result_json TEXT
             );
@@ -202,6 +204,13 @@ def _initialize() -> None:
             );
             """
         )
+        action_request_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(action_requests)").fetchall()
+        }
+        if "cancel_requested" not in action_request_columns:
+            connection.execute("ALTER TABLE action_requests ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0")
+        if "cancel_requested_utc" not in action_request_columns:
+            connection.execute("ALTER TABLE action_requests ADD COLUMN cancel_requested_utc TEXT")
         connection.execute(
             "INSERT OR IGNORE INTO github_mirror_state "
             "(singleton, generation, mirrored_generation, last_attempt_utc, last_success_utc, last_error) "
@@ -444,6 +453,8 @@ class ApiHandler(BaseHTTPRequestHandler):
                 "profile": request_row["profile_name"],
                 "runnerVersion": request_row["runner_version"],
                 "state": state,
+                "cancelRequested": bool(request_row["cancel_requested"]),
+                "cancelRequestedUtc": request_row["cancel_requested_utc"],
                 "createdUtc": request_row["created_utc"],
                 "expiresUtc": datetime.fromtimestamp(float(request_row["expires_at"]), timezone.utc).isoformat().replace("+00:00", "Z"),
                 "events": events,
@@ -659,6 +670,87 @@ class ApiHandler(BaseHTTPRequestHandler):
                 "requestExpiresUtc": datetime.fromtimestamp(float(row["expires_at"]), timezone.utc).isoformat().replace("+00:00", "Z"),
                 "uploadExpiresUtc": datetime.fromtimestamp(float(row["upload_expires_at"]), timezone.utc).isoformat().replace("+00:00", "Z"),
             },
+        )
+
+    def _cancel_action_request(self, request_id: str) -> None:
+        if not self._check_action_origin():
+            return
+        browser = self._action_browser_session(require_csrf=True)
+        if browser is None:
+            return
+        session_hash, _session_row = browser
+        payload = self._action_json_body(16)
+        if payload is None:
+            return
+        if payload != {}:
+            self._error(400, "invalid_action_cancel", "Action cancel body must be an empty JSON object.")
+            return
+        if not ACTION_ID.fullmatch(request_id):
+            self._error(404, "action_not_found", "Action request was not found.")
+            return
+        request_hash = self._action_hash(request_id)
+        with DB_LOCK, _connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM action_requests WHERE request_hash = ? AND session_hash = ?",
+                (request_hash, session_hash),
+            ).fetchone()
+            if row is None:
+                connection.rollback()
+                self._error(404, "action_not_found", "Action request was not found.")
+                return
+            accepted = row["state"] not in ACTION_TERMINAL_STATES
+            if accepted:
+                now_utc = _utc_now()
+                if row["state"] == "REQUESTED":
+                    connection.execute(
+                        "UPDATE action_requests SET state = 'CANCELED', cancel_requested = 1, cancel_requested_utc = ? "
+                        "WHERE request_hash = ? AND state = 'REQUESTED'",
+                        (now_utc, request_hash),
+                    )
+                else:
+                    connection.execute(
+                        "UPDATE action_requests SET cancel_requested = 1, cancel_requested_utc = ? "
+                        "WHERE request_hash = ? AND state NOT IN ('COMPLETED','PARTIAL','SKIPPED','FAILED','CANCELED','EXPIRED','INTERRUPTED')",
+                        (now_utc, request_hash),
+                    )
+            row = connection.execute("SELECT * FROM action_requests WHERE request_hash = ?", (request_hash,)).fetchone()
+            connection.commit()
+        self._send_json(
+            200,
+            {"requestId": request_id, "state": row["state"], "cancelRequested": bool(row["cancel_requested"]), "accepted": accepted},
+            cache_control="no-store",
+        )
+
+    def _get_action_control(self, request_id: str) -> None:
+        if not ACTION_ID.fullmatch(request_id):
+            self._error(404, "action_not_found", "Action request was not found.")
+            return
+        authorization = self.headers.get("Authorization", "")
+        scheme, _, capability = authorization.partition(" ")
+        if scheme.lower() != "bearer" or not ACTION_ID.fullmatch(capability):
+            self._error(401, "runner_authorization_required", "The runner result capability is required.")
+            return
+        request_hash = self._action_hash(request_id)
+        capability_hash = self._action_hash(capability)
+        with _connect() as connection:
+            row = connection.execute(
+                "SELECT claim_capability_hash, state, cancel_requested, upload_expires_at FROM action_requests WHERE request_hash = ?",
+                (request_hash,),
+            ).fetchone()
+        if row is None:
+            self._error(404, "action_not_found", "Action request was not found.")
+            return
+        if not hmac.compare_digest(row["claim_capability_hash"] or "", capability_hash):
+            self._error(401, "runner_authorization_required", "The runner result capability is invalid.")
+            return
+        if float(row["upload_expires_at"] or 0) <= time.time():
+            self._error(410, "action_upload_expired", "The result-upload window expired.")
+            return
+        self._send_json(
+            200,
+            {"cancelRequested": bool(row["cancel_requested"]), "state": row["state"]},
+            cache_control="no-store",
         )
 
     @staticmethod
@@ -991,6 +1083,10 @@ class ApiHandler(BaseHTTPRequestHandler):
                 self._error(404, "action_not_found", "Action request was not found.")
                 return
             self._send_action_state(row, request_id)
+            return
+
+        if len(parts) == 4 and parts[:2] == ["v1", "actions"] and parts[3] == "control":
+            self._get_action_control(parts[2])
             return
 
         if not parts:
@@ -1387,6 +1483,9 @@ class ApiHandler(BaseHTTPRequestHandler):
             return
         if len(parts) == 4 and parts[:2] == ["v1", "actions"] and parts[3] == "claim":
             self._claim_action_request(parts[2])
+            return
+        if len(parts) == 4 and parts[:2] == ["v1", "actions"] and parts[3] == "cancel":
+            self._cancel_action_request(parts[2])
             return
         if len(parts) == 4 and parts[:2] == ["v1", "actions"] and parts[3] == "events":
             self._post_action_event(parts[2])

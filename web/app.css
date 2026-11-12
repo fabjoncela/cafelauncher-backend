@@ -73,6 +73,10 @@ main { display: grid; gap: 14px; padding-bottom: 56px; }
 label { font-weight: 650; }
 select { min-width: 150px; border: 1px solid var(--border); border-radius: 7px; background: var(--raised); color: var(--text); padding: 10px; }
 .result-heading-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 15px; }
+.result-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.cancel-note { margin: -4px 0 0; color: var(--amber) !important; font-size: 13px; }
+.cancel-button { border-color: #9b5555; background: #642f38; }
+.cancel-button:hover:not(:disabled) { background: #81404a; }
 .state-pill { border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px; font-size: 12px; font-weight: 800; }
 .state-pill.success { color: var(--green); border-color: #35694e; }
 .state-pill.warning { color: var(--amber); border-color: #735c2e; }

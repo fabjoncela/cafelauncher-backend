@@ -77,7 +77,12 @@
       </p>
       <ol id="result-steps" class="result-steps"></ol>
       <pre id="result-data" class="result-data" hidden></pre>
-      <button id="unlock-button" type="button" class="secondary-button" hidden>I checked this PC — allow another action</button>
+      <div class="result-actions">
+        <button id="cancel-action-button" type="button" class="cancel-button" hidden>Stop action</button>
+        <button id="download-action-log-button" type="button" class="secondary-button" hidden>Download action log</button>
+        <button id="unlock-button" type="button" class="secondary-button" hidden>I checked this PC — allow another action</button>
+      </div>
+      <p id="cancel-note" class="cancel-note" hidden>Stopping may interrupt an action after some settings have changed. Check this PC before retrying.</p>
     </section>
 
     <section class="panel recent-panel" aria-labelledby="recent-heading">
