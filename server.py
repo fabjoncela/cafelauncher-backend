@@ -998,7 +998,7 @@ class ApiHandler(BaseHTTPRequestHandler):
             self._send_viewer_asset(parts[0])
             return
 
-        if parts == ["status"]:
+        if parts in (["status"], ["stats"]):
             try:
                 with _connect() as connection:
                     profile_count = connection.execute(
@@ -1079,7 +1079,8 @@ class ApiHandler(BaseHTTPRequestHandler):
     <article class="status-card"><p class="card-label">Backend-hosted release</p><p class="card-value release-value">{release_value}</p><p class="card-detail">The launcher currently auto-updates from Cs-script on GitHub.</p></article>
   </section>
   <nav class="quick-links" aria-label="Backend links">
-    <a class="primary-link" href="/viewer">Open profile viewer</a>
+    <a class="primary-link" href="/">CafeLauncher home</a>
+    <a href="/viewer">Open profile viewer</a>
     <a href="https://github.com/fabjoncela/cafelauncher-backend#api-contract">API documentation</a>
     <a href="/v1/health">Health JSON</a>
     <a href="https://github.com/fabjoncela/cafelauncher-backend-mirror/blob/main/mirror-manifest.json">Mirror manifest</a>
