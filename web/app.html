@@ -15,7 +15,11 @@
       <h1>Choose your setup</h1>
       <p class="subhead">Select a profile and run CafeLauncher on this PC.</p>
     </div>
-    <a class="status-link" href="/status">Backend status</a>
+    <div class="site-meta" aria-label="CafeLauncher version and update time">
+      <a class="status-link" href="/status">Backend status</a>
+      <span class="site-version">Version v<span id="site-version">@@APP_VERSION@@</span></span>
+      <span class="site-updated">Updated <time id="site-updated" datetime="@@APP_UPDATED_UTC@@">@@APP_UPDATED_UTC@@</time></span>
+    </div>
   </header>
 
   <main>

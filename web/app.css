@@ -25,7 +25,10 @@ h1, h2, p { margin-top: 0; }
 h1 { margin-bottom: 5px; font-size: clamp(28px, 4vw, 38px); letter-spacing: -.035em; }
 h2 { margin: 0 0 8px; font-size: 21px; }
 .subhead, .panel p { color: var(--muted); }
+.site-meta { display: grid; justify-items: end; gap: 3px; max-width: 190px; color: var(--muted); font-size: 12px; line-height: 1.35; text-align: right; }
 .status-link { color: var(--accent); }
+.site-version { color: var(--text); font-weight: 700; }
+.site-updated time { display: block; }
 main { display: grid; gap: 14px; padding-bottom: 56px; }
 .panel { border: 1px solid var(--border); border-radius: 12px; background: color-mix(in srgb, var(--panel) 95%, transparent); padding: 20px; }
 .intro-panel p:last-child { margin-bottom: 0; }
@@ -94,4 +97,4 @@ select { min-width: 150px; border: 1px solid var(--border); border-radius: 7px; 
 .confirm-dialog p { color: var(--muted); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; }
 .secondary-button { border-color: var(--border); background: var(--raised); }
-@media (max-width: 640px) { .site-header { padding-top: 25px; } .action-panel, .install-panel, .readiness-heading-row, .recent-entry { align-items: stretch; flex-direction: column; } .readiness-summary { flex-wrap: wrap; } .readiness-overall { margin-left: 0; } .profile-panel { align-items: stretch; flex-direction: column; } .install-button { align-self: flex-start; } .recent-entry button { align-self: flex-start; } }
+@media (max-width: 640px) { .site-header { gap: 14px; padding-top: 25px; } .site-meta { max-width: 125px; font-size: 10px; } .action-panel, .install-panel, .readiness-heading-row, .recent-entry { align-items: stretch; flex-direction: column; } .readiness-summary { flex-wrap: wrap; } .readiness-overall { margin-left: 0; } .profile-panel { align-items: stretch; flex-direction: column; } .install-button { align-self: flex-start; } .recent-entry button { align-self: flex-start; } }

@@ -21,6 +21,16 @@ let csrfToken = "";
 let activeRequest = false;
 let latestActionState = null;
 
+const siteUpdatedTime = document.querySelector("#site-updated");
+if (siteUpdatedTime?.dateTime) {
+  const updatedAt = new Date(siteUpdatedTime.dateTime);
+  if (!Number.isNaN(updatedAt.getTime())) {
+    siteUpdatedTime.textContent = new Intl.DateTimeFormat(undefined, {
+      year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short",
+    }).format(updatedAt);
+  }
+}
+
 function setServiceStatus(message, kind = "") {
   serviceStatus.textContent = message;
   serviceStatus.dataset.kind = kind;
