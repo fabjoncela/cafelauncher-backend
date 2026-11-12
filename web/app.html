@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>CafeLauncher</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <div>
+      <p class="eyebrow">CAFE LAUNCHER · WEB ACTIONS</p>
+      <h1>Choose your setup</h1>
+      <p class="subhead">Select a profile and run CafeLauncher on this PC.</p>
+    </div>
+    <a class="status-link" href="/status">Backend status</a>
+  </header>
+
+  <main>
+    <section class="panel intro-panel">
+      <p>Actions run on this Windows PC under its current user and Steam session. Keep this page open to see progress and results.</p>
+      <p id="service-status" class="status-line" role="status" aria-live="polite">Connecting to CafeLauncher…</p>
+    </section>
+
+    <section class="panel action-panel" aria-labelledby="detect-heading">
+      <div>
+        <p class="eyebrow">READ ONLY</p>
+        <h2 id="detect-heading">Detect this PC</h2>
+        <p>Find the local Steam libraries and validated CS2 install.</p>
+      </div>
+      <button id="detect-button" type="button" disabled>Detect PC</button>
+    </section>
+
+    <section class="panel action-panel" aria-labelledby="play-heading">
+      <div>
+        <p class="eyebrow">PROFILE ACTION</p>
+        <h2 id="play-heading">Play + Exec</h2>
+        <p>Install the selected profile's verified CFG and start CS2 through Steam.</p>
+      </div>
+      <div class="profile-controls">
+        <label for="profile-select">Profile</label>
+        <select id="profile-select" disabled><option value="">Loading profiles…</option></select>
+        <button id="play-button" type="button" disabled>Play + Exec</button>
+      </div>
+    </section>
+
+    <section id="result-panel" class="panel result-panel" aria-labelledby="result-heading" hidden>
+      <div class="result-heading-row">
+        <div><p class="eyebrow">ACTION RESULT</p><h2 id="result-heading">Waiting for action</h2></div>
+        <span id="result-state" class="state-pill">—</span>
+      </div>
+      <p id="result-summary" class="result-summary"></p>
+      <p id="protocol-fallback" class="protocol-fallback" hidden>
+        If CafeLauncher did not open, <a id="protocol-link" href="#">open it on this PC</a>.
+      </p>
+      <ol id="result-steps" class="result-steps"></ol>
+      <pre id="result-data" class="result-data" hidden></pre>
+      <button id="unlock-button" type="button" class="secondary-button" hidden>I checked this PC — allow another action</button>
+    </section>
+  </main>
+
+  <dialog id="confirm-dialog" class="confirm-dialog">
+    <div>
+      <p class="eyebrow">CONFIRM ON THIS PAGE</p>
+      <h2 id="confirm-title">Run CafeLauncher action?</h2>
+      <p id="confirm-description"></p>
+      <div class="dialog-actions">
+        <button id="confirm-cancel" type="button" class="secondary-button">Cancel</button>
+        <button id="confirm-accept" type="button">Continue</button>
+      </div>
+    </div>
+  </dialog>
+</body>
+</html>

@@ -10,11 +10,14 @@ import ipaddress
 import json
 import os
 import re
+import secrets
 import sqlite3
 import tempfile
 import threading
+import time
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
+from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
@@ -32,6 +35,20 @@ MAX_TOOL_BYTES = 32 * 1024 * 1024
 PROFILE_NAME = re.compile(r"[A-Za-z0-9_-]{1,32}\Z")
 LAUNCHER_RELEASE_VERSION = re.compile(r"\d{4}\.\d{1,2}\.\d{1,2}\.\d+\Z")
 TOOL_VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
+ACTION_ID = re.compile(r"[A-Za-z0-9_-]{43}\Z")
+ACTION_CLIENT_ID = re.compile(r"[A-Za-z0-9_-]{43}\Z")
+ACTION_EVENT_ID = re.compile(r"[0-9a-fA-F-]{36}\Z")
+ACTION_PROFILES = {"detect-pc": None, "play-exec": frozenset(PROFILE_CFG_FILES)}
+ACTION_SESSION_COOKIE = "CafeLauncherActionSession"
+ACTION_SESSION_TTL_SECONDS = 3600
+ACTION_REQUEST_TTL_SECONDS = 90
+ACTION_RESULT_TTL_SECONDS = 600
+MAX_ACTION_BODY_BYTES = 16 * 1024
+MAX_ACTION_DETAIL_CHARS = 1000
+MAX_ACTION_EVENTS = 64
+ACTION_TERMINAL_STATES = frozenset({"COMPLETED", "PARTIAL", "SKIPPED", "FAILED", "CANCELED", "INTERRUPTED"})
+ACTION_PROGRESS_STATES = frozenset({"RUNNING", "AWAITING_LOCAL_INPUT"})
+ACTION_STEP_STATES = frozenset({"SUCCESS", "PARTIAL", "SKIPPED", "FAILED", "PENDING", "RUNNING"})
 DB_LOCK = threading.RLock()
 
 
@@ -148,6 +165,34 @@ def _initialize() -> None:
                 last_success_utc TEXT,
                 last_error TEXT
             );
+            CREATE TABLE IF NOT EXISTS action_sessions (
+                session_hash TEXT PRIMARY KEY,
+                csrf_hash TEXT NOT NULL,
+                created_utc TEXT NOT NULL,
+                expires_at REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS action_requests (
+                request_hash TEXT PRIMARY KEY,
+                session_hash TEXT NOT NULL,
+                action TEXT NOT NULL,
+                profile_name TEXT,
+                state TEXT NOT NULL,
+                created_utc TEXT NOT NULL,
+                expires_at REAL NOT NULL,
+                upload_expires_at REAL,
+                claim_capability_hash TEXT,
+                runner_version TEXT,
+                events_json TEXT NOT NULL,
+                result_json TEXT
+            );
+            CREATE INDEX IF NOT EXISTS ix_action_requests_expiry
+                ON action_requests(expires_at);
+            CREATE TABLE IF NOT EXISTS action_events (
+                request_hash TEXT NOT NULL,
+                event_id TEXT NOT NULL,
+                created_utc TEXT NOT NULL,
+                PRIMARY KEY(request_hash, event_id)
+            );
             """
         )
         connection.execute(
@@ -201,7 +246,12 @@ class ApiHandler(BaseHTTPRequestHandler):
     def log_message(self, _format: str, *_args: object) -> None:
         # Avoid BaseHTTPRequestHandler's default logging of raw request paths.
         parsed = urlsplit(self.path)
-        safe_path = parsed.path[:180]
+        path_parts = parsed.path.strip("/").split("/")
+        if len(path_parts) >= 3 and path_parts[:2] == ["v1", "actions"] and path_parts[2] != "session":
+            path_parts[2] = "[request]"
+            safe_path = "/" + "/".join(path_parts[:4])
+        else:
+            safe_path = parsed.path[:180]
         print(f"{_utc_now()} {self.client_address[0]} {self.command} {safe_path} {getattr(self, '_status', 0)}")
 
     def _send_bytes(
@@ -274,6 +324,563 @@ class ApiHandler(BaseHTTPRequestHandler):
         return True
 
     @staticmethod
+    def _action_origin() -> str | None:
+        configured = os.environ.get("CAFELAUNCHER_ACTION_ORIGIN", "").strip()
+        if not configured:
+            return None
+        try:
+            parsed = urlsplit(configured)
+            if (
+                parsed.scheme != "https"
+                or not parsed.hostname
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.path not in ("", "/")
+                or parsed.query
+                or parsed.fragment
+            ):
+                return None
+            port = parsed.port
+        except ValueError:
+            return None
+        host = parsed.hostname.lower()
+        authority = host if port in (None, 443) else f"{host}:{port}"
+        return f"https://{authority}"
+
+    def _check_action_origin(self) -> bool:
+        expected = self._action_origin()
+        if expected is None:
+            self._error(503, "actions_unconfigured", "Web actions are not configured on this server.")
+            return False
+        origin = self.headers.get("Origin", "").rstrip("/")
+        if not origin:
+            referer = urlsplit(self.headers.get("Referer", ""))
+            if referer.scheme and referer.netloc:
+                origin = f"{referer.scheme}://{referer.netloc}".rstrip("/")
+        fetch_site = self.headers.get("Sec-Fetch-Site", "")
+        if not origin and fetch_site == "same-origin" and self.headers.get("Host", "").lower() == urlsplit(expected).netloc.lower():
+            origin = expected
+        if origin != expected or (fetch_site and fetch_site != "same-origin"):
+            self._error(403, "cross_origin_request", "Web action requests must come from the CafeLauncher site.")
+            return False
+        return True
+
+    def _action_json_body(self, maximum: int) -> object | None:
+        content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+        if content_type != "application/json":
+            self._error(415, "unsupported_media_type", "Web action requests must use application/json.")
+            return None
+        body = self._body(maximum)
+        if body is None:
+            return None
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
+            self._error(400, "invalid_json", "Web action body must be valid UTF-8 JSON.")
+            return None
+        if payload is None:
+            self._error(400, "invalid_json", "Web action body must be a JSON object.")
+            return None
+        return payload
+
+    @staticmethod
+    def _action_hash(value: str) -> str:
+        return hashlib.sha256(value.encode("ascii")).hexdigest()
+
+    def _action_browser_session(self, *, require_csrf: bool) -> tuple[str, sqlite3.Row] | None:
+        raw_cookie = self.headers.get("Cookie", "")
+        try:
+            cookie = SimpleCookie()
+            cookie.load(raw_cookie)
+            session_value = cookie[ACTION_SESSION_COOKIE].value
+        except (CookieError, KeyError, TypeError, ValueError):
+            self._error(401, "action_session_required", "Open the CafeLauncher page and retry this action.")
+            return None
+        if not re.fullmatch(r"[A-Za-z0-9_-]{43}", session_value):
+            self._error(401, "action_session_invalid", "The CafeLauncher action session is invalid.")
+            return None
+        session_hash = self._action_hash(session_value)
+        with _connect() as connection:
+            row = connection.execute(
+                "SELECT session_hash, csrf_hash, expires_at FROM action_sessions WHERE session_hash = ?",
+                (session_hash,),
+            ).fetchone()
+        if row is None or float(row["expires_at"]) <= time.time():
+            self._error(401, "action_session_expired", "The CafeLauncher action session expired. Reload the page.")
+            return None
+        if require_csrf:
+            csrf_value = self.headers.get("X-Cafe-CSRF", "")
+            if not re.fullmatch(r"[A-Za-z0-9_-]{43}", csrf_value) or not hmac.compare_digest(
+                self._action_hash(csrf_value), row["csrf_hash"]
+            ):
+                self._error(403, "csrf_rejected", "Reload the CafeLauncher page before retrying.")
+                return None
+        return session_hash, row
+
+    def _send_action_state(self, request_row: sqlite3.Row, request_id: str, *, status_code: int = 200) -> None:
+        try:
+            events = json.loads(request_row["events_json"])
+            result = json.loads(request_row["result_json"]) if request_row["result_json"] else None
+        except (json.JSONDecodeError, TypeError):
+            self._error(503, "action_state_unavailable", "The action result could not be read.")
+            return
+        state = request_row["state"]
+        if state == "REQUESTED" and float(request_row["expires_at"]) <= time.time():
+            state = "EXPIRED"
+        elif state in {"CLAIMED", "RUNNING", "AWAITING_LOCAL_INPUT"} and float(request_row["upload_expires_at"] or 0) <= time.time():
+            state = "INTERRUPTED"
+        self._send_json(
+            status_code,
+            {
+                "requestId": request_id,
+                "action": request_row["action"],
+                "profile": request_row["profile_name"],
+                "state": state,
+                "createdUtc": request_row["created_utc"],
+                "expiresUtc": datetime.fromtimestamp(float(request_row["expires_at"]), timezone.utc).isoformat().replace("+00:00", "Z"),
+                "events": events,
+                "result": result,
+            },
+            cache_control="no-store",
+        )
+
+    def _get_action_session(self) -> None:
+        if not self._check_action_origin():
+            return
+        existing_hash = None
+        cookie = SimpleCookie()
+        try:
+            cookie.load(self.headers.get("Cookie", ""))
+            existing_value = cookie[ACTION_SESSION_COOKIE].value
+            if re.fullmatch(r"[A-Za-z0-9_-]{43}", existing_value):
+                existing_hash = self._action_hash(existing_value)
+        except (CookieError, KeyError, TypeError, ValueError):
+            pass
+        csrf_value = secrets.token_urlsafe(32)
+        now = time.time()
+        session_value = None
+        with DB_LOCK, _connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute("DELETE FROM action_sessions WHERE expires_at <= ?", (now,))
+            existing = connection.execute(
+                "SELECT session_hash FROM action_sessions WHERE session_hash = ? AND expires_at > ?",
+                (existing_hash, now),
+            ).fetchone() if existing_hash else None
+            if existing:
+                session_hash = existing["session_hash"]
+                connection.execute(
+                    "UPDATE action_sessions SET csrf_hash = ? WHERE session_hash = ?",
+                    (self._action_hash(csrf_value), session_hash),
+                )
+                session_value = cookie[ACTION_SESSION_COOKIE].value
+            else:
+                session_value = secrets.token_urlsafe(32)
+                session_hash = self._action_hash(session_value)
+                connection.execute(
+                    "INSERT INTO action_sessions (session_hash, csrf_hash, created_utc, expires_at) VALUES (?, ?, ?, ?)",
+                    (session_hash, self._action_hash(csrf_value), _utc_now(), now + ACTION_SESSION_TTL_SECONDS),
+                )
+            connection.commit()
+        self._send_json(
+            200,
+            {"csrfToken": csrf_value, "expiresInSeconds": ACTION_SESSION_TTL_SECONDS},
+            headers={
+                "Set-Cookie": (
+                    f"{ACTION_SESSION_COOKIE}={session_value}; Path=/v1/actions; Max-Age={ACTION_SESSION_TTL_SECONDS}; "
+                    "Secure; HttpOnly; SameSite=Strict"
+                ),
+                "Vary": "Origin",
+            },
+        )
+
+    def _create_action_request(self) -> None:
+        if not self._check_action_origin():
+            return
+        browser = self._action_browser_session(require_csrf=True)
+        if browser is None:
+            return
+        session_hash, _session_row = browser
+        payload = self._action_json_body(2048)
+        if payload is None:
+            return
+        if not isinstance(payload, dict) or set(payload) != {"action", "profile", "clientRequestId"}:
+            self._error(400, "invalid_action_request", "Action request contains missing or unsupported fields.")
+            return
+        action = payload["action"]
+        profile_name = payload["profile"]
+        client_id = payload["clientRequestId"]
+        if not isinstance(action, str) or action not in ACTION_PROFILES:
+            self._error(422, "unsupported_action", "That web action is not available.")
+            return
+        if not isinstance(client_id, str) or not ACTION_CLIENT_ID.fullmatch(client_id):
+            self._error(422, "invalid_request_id", "clientRequestId must be a 256-bit base64url identifier.")
+            return
+        expected_profiles = ACTION_PROFILES[action]
+        if expected_profiles is None:
+            if profile_name is not None:
+                self._error(422, "invalid_action_profile", "Detect PC does not use a profile.")
+                return
+        elif not isinstance(profile_name, str) or profile_name not in expected_profiles:
+            self._error(422, "invalid_action_profile", "Choose a supported CafeLauncher profile.")
+            return
+
+        request_hash = self._action_hash(client_id)
+        now = time.time()
+        created_utc = _utc_now()
+        with DB_LOCK, _connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            stale_cutoff = now - 86400
+            connection.execute(
+                "DELETE FROM action_events WHERE request_hash IN "
+                "(SELECT request_hash FROM action_requests WHERE expires_at < ? AND COALESCE(upload_expires_at, 0) < ?)",
+                (stale_cutoff, now),
+            )
+            connection.execute(
+                "DELETE FROM action_requests WHERE expires_at < ? AND COALESCE(upload_expires_at, 0) < ?",
+                (stale_cutoff, now),
+            )
+            row = connection.execute(
+                "SELECT * FROM action_requests WHERE request_hash = ?", (request_hash,)
+            ).fetchone()
+            if row is not None:
+                if row["session_hash"] != session_hash:
+                    connection.rollback()
+                    self._error(409, "request_id_conflict", "This action request identifier has already been used.")
+                    return
+                connection.commit()
+                self._send_action_state(row, client_id)
+                return
+            outstanding = connection.execute(
+                "SELECT COUNT(*) FROM action_requests WHERE session_hash = ? "
+                "AND state IN ('REQUESTED', 'CLAIMED', 'RUNNING', 'AWAITING_LOCAL_INPUT') "
+                "AND (expires_at > ? OR upload_expires_at > ?)",
+                (session_hash, now, now),
+            ).fetchone()[0]
+            if outstanding >= 3:
+                connection.rollback()
+                self._error(429, "too_many_action_requests", "Finish or wait for an existing CafeLauncher action first.")
+                return
+            connection.execute(
+                "INSERT INTO action_requests "
+                "(request_hash, session_hash, action, profile_name, state, created_utc, expires_at, events_json) "
+                "VALUES (?, ?, ?, ?, 'REQUESTED', ?, ?, '[]')",
+                (
+                    request_hash,
+                    session_hash,
+                    action,
+                    profile_name,
+                    created_utc,
+                    now + ACTION_REQUEST_TTL_SECONDS,
+                ),
+            )
+            row = connection.execute("SELECT * FROM action_requests WHERE request_hash = ?", (request_hash,)).fetchone()
+            connection.commit()
+        self._send_action_state(row, client_id, status_code=201)
+
+    def _claim_action_request(self, request_id: str) -> None:
+        if not ACTION_ID.fullmatch(request_id):
+            self._error(404, "action_not_found", "Action request was not found.")
+            return
+        payload = self._action_json_body(2048)
+        if payload is None:
+            return
+        if not isinstance(payload, dict) or set(payload) != {"runnerVersion", "protocolVersion", "claimCapability"}:
+            self._error(400, "invalid_action_claim", "Action claim contains missing or unsupported fields.")
+            return
+        runner_version = payload["runnerVersion"]
+        protocol_version = payload["protocolVersion"]
+        claim_capability = payload["claimCapability"]
+        if (
+            not isinstance(runner_version, str)
+            or not re.fullmatch(r"[A-Za-z0-9._-]{1,40}", runner_version)
+            or isinstance(protocol_version, bool)
+            or protocol_version != 1
+            or not isinstance(claim_capability, str)
+            or not ACTION_ID.fullmatch(claim_capability)
+        ):
+            self._error(422, "invalid_action_claim", "Runner claim fields are invalid.")
+            return
+
+        request_hash = self._action_hash(request_id)
+        capability_hash = self._action_hash(claim_capability)
+        now = time.time()
+        with DB_LOCK, _connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM action_requests WHERE request_hash = ?", (request_hash,)
+            ).fetchone()
+            if row is None:
+                connection.rollback()
+                self._error(404, "action_not_found", "Action request was not found.")
+                return
+            if row["state"] == "REQUESTED":
+                if float(row["expires_at"]) <= now:
+                    connection.execute(
+                        "UPDATE action_requests SET state = 'EXPIRED' WHERE request_hash = ?", (request_hash,)
+                    )
+                    connection.commit()
+                    self._error(410, "action_expired", "This action request expired. Return to the page and retry.")
+                    return
+                upload_expires = now + ACTION_RESULT_TTL_SECONDS
+                connection.execute(
+                    "UPDATE action_requests SET state = 'CLAIMED', claim_capability_hash = ?, runner_version = ?, "
+                    "upload_expires_at = ? WHERE request_hash = ? AND state = 'REQUESTED'",
+                    (capability_hash, runner_version, upload_expires, request_hash),
+                )
+                row = connection.execute("SELECT * FROM action_requests WHERE request_hash = ?", (request_hash,)).fetchone()
+                connection.commit()
+            elif row["state"] in {"CLAIMED", "RUNNING", "AWAITING_LOCAL_INPUT"}:
+                if float(row["upload_expires_at"] or 0) <= now or not hmac.compare_digest(
+                    row["claim_capability_hash"] or "", capability_hash
+                ):
+                    connection.rollback()
+                    self._error(409, "action_already_claimed", "This action request has already been claimed.")
+                    return
+                connection.commit()
+            else:
+                connection.rollback()
+                self._error(409, "action_not_claimable", "This action request is no longer available to run.")
+                return
+        self._send_json(
+            200,
+            {
+                "requestId": request_id,
+                "action": row["action"],
+                "profile": row["profile_name"],
+                "state": row["state"],
+                "requestExpiresUtc": datetime.fromtimestamp(float(row["expires_at"]), timezone.utc).isoformat().replace("+00:00", "Z"),
+                "uploadExpiresUtc": datetime.fromtimestamp(float(row["upload_expires_at"]), timezone.utc).isoformat().replace("+00:00", "Z"),
+            },
+        )
+
+    @staticmethod
+    def _validate_action_step(step: object) -> dict[str, str] | None:
+        if not isinstance(step, dict) or set(step) != {"name", "status", "detail"}:
+            return None
+        name, status, detail = step["name"], step["status"], step["detail"]
+        if (
+            not isinstance(name, str)
+            or not name.strip()
+            or len(name) > 120
+            or not isinstance(status, str)
+            or status not in ACTION_STEP_STATES
+            or not isinstance(detail, str)
+            or len(detail) > MAX_ACTION_DETAIL_CHARS
+        ):
+            return None
+        return {"name": name.strip(), "status": status, "detail": detail}
+
+    @staticmethod
+    def _validate_action_result(action: str, result: object) -> dict[str, object] | None:
+        if not isinstance(result, dict) or set(result) != {"summary", "steps", "data"}:
+            return None
+        summary, steps, data = result["summary"], result["steps"], result["data"]
+        if not isinstance(summary, str) or len(summary) > MAX_ACTION_DETAIL_CHARS:
+            return None
+        if not isinstance(steps, list) or len(steps) > 32:
+            return None
+        normalized_steps = []
+        for step in steps:
+            normalized = ApiHandler._validate_action_step(step)
+            if normalized is None:
+                return None
+            normalized_steps.append(normalized)
+        if action == "detect-pc":
+            if not isinstance(data, dict) or set(data) != {"steam", "cs2"}:
+                return None
+            steam, cs2 = data["steam"], data["cs2"]
+            if not isinstance(steam, dict) or set(steam) != {"status", "executable", "libraries", "activeSessionPresent"}:
+                return None
+            if not isinstance(cs2, dict) or set(cs2) != {"status", "installPath", "configPath"}:
+                return None
+            if (
+                not isinstance(steam["status"], str)
+                or steam["status"] not in {"DETECTED", "NOT_DETECTED"}
+                or not isinstance(steam["activeSessionPresent"], bool)
+            ):
+                return None
+            if not isinstance(cs2["status"], str) or cs2["status"] not in {"DETECTED", "NOT_UNIQUELY_DETECTED"}:
+                return None
+            paths = [steam["executable"], cs2["installPath"], cs2["configPath"]]
+            if any(value is not None and (not isinstance(value, str) or len(value) > 1024) for value in paths):
+                return None
+            libraries = steam["libraries"]
+            if not isinstance(libraries, list) or len(libraries) > 32 or any(
+                not isinstance(value, str) or len(value) > 1024 for value in libraries
+            ):
+                return None
+            normalized_data: object = {
+                "steam": {
+                    "status": steam["status"],
+                    "executable": steam["executable"],
+                    "libraries": libraries,
+                    "activeSessionPresent": steam["activeSessionPresent"],
+                },
+                "cs2": {
+                    "status": cs2["status"],
+                    "installPath": cs2["installPath"],
+                    "configPath": cs2["configPath"],
+                },
+            }
+        elif action == "play-exec":
+            if not isinstance(data, dict) or set(data) != {
+                "steamLaunchRequested", "cs2AlreadyRunning", "cfgName", "consoleCommands", "executionOutcomeKnown"
+            }:
+                return None
+            if (
+                not isinstance(data["steamLaunchRequested"], bool)
+                or not isinstance(data["cs2AlreadyRunning"], bool)
+                or not isinstance(data["executionOutcomeKnown"], bool)
+            ):
+                return None
+            cfg_name = data["cfgName"]
+            if not isinstance(cfg_name, str) or cfg_name not in set(PROFILE_CFG_FILES.values()):
+                return None
+            commands = data["consoleCommands"]
+            if not isinstance(commands, list) or len(commands) > 2 or any(
+                not isinstance(value, str) or len(value) > 200 for value in commands
+            ):
+                return None
+            if commands and commands != [
+                "exec cafelauncher_profile_baseline.cfg",
+                f"exec {cfg_name}",
+            ]:
+                return None
+            normalized_data = {
+                "steamLaunchRequested": data["steamLaunchRequested"],
+                "cs2AlreadyRunning": data["cs2AlreadyRunning"],
+                "executionOutcomeKnown": data["executionOutcomeKnown"],
+                "cfgName": cfg_name,
+                "consoleCommands": commands,
+            }
+        else:
+            return None
+        return {"summary": summary, "steps": normalized_steps, "data": normalized_data}
+
+    def _post_action_event(self, request_id: str) -> None:
+        if not ACTION_ID.fullmatch(request_id):
+            self._error(404, "action_not_found", "Action request was not found.")
+            return
+        auth_scheme, _, capability = self.headers.get("Authorization", "").partition(" ")
+        if auth_scheme.lower() != "bearer" or not ACTION_ID.fullmatch(capability):
+            self._error(401, "runner_authorization_required", "A valid runner result capability is required.")
+            return
+        payload = self._action_json_body(MAX_ACTION_BODY_BYTES)
+        if payload is None:
+            return
+        if not isinstance(payload, dict) or not {"eventId", "state"}.issubset(payload):
+            self._error(400, "invalid_action_event", "Action event is missing required fields.")
+            return
+        event_id, state = payload["eventId"], payload["state"]
+        if not isinstance(event_id, str) or not ACTION_EVENT_ID.fullmatch(event_id):
+            self._error(422, "invalid_event_id", "eventId must be a UUID.")
+            return
+        if not isinstance(state, str) or state not in ACTION_PROGRESS_STATES | ACTION_TERMINAL_STATES:
+            self._error(422, "invalid_action_state", "Action event state is unsupported.")
+            return
+        allowed_fields = {"eventId", "state", "step", "result"}
+        if set(payload) - allowed_fields:
+            self._error(400, "invalid_action_event", "Action event contains unsupported fields.")
+            return
+        step = None
+        if "step" in payload:
+            step = self._validate_action_step(payload["step"])
+            if step is None:
+                self._error(422, "invalid_action_step", "Action step is invalid or too large.")
+                return
+        result = None
+        if state in ACTION_TERMINAL_STATES:
+            if "result" not in payload:
+                self._error(400, "action_result_required", "A terminal event must include a result.")
+                return
+        elif "result" in payload:
+            self._error(400, "unexpected_action_result", "Only terminal events may include a result.")
+            return
+
+        request_hash = self._action_hash(request_id)
+        capability_hash = self._action_hash(capability)
+        now = time.time()
+        with DB_LOCK, _connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM action_requests WHERE request_hash = ?", (request_hash,)
+            ).fetchone()
+            if row is None:
+                connection.rollback()
+                self._error(404, "action_not_found", "Action request was not found.")
+                return
+            if not hmac.compare_digest(row["claim_capability_hash"] or "", capability_hash):
+                connection.rollback()
+                self._error(401, "runner_authorization_required", "The runner result capability is invalid.")
+                return
+            if float(row["upload_expires_at"] or 0) <= now:
+                connection.rollback()
+                self._error(410, "action_upload_expired", "The result-upload window expired.")
+                return
+            duplicate = connection.execute(
+                "SELECT 1 FROM action_events WHERE request_hash = ? AND event_id = ?", (request_hash, event_id)
+            ).fetchone()
+            if duplicate is not None:
+                connection.commit()
+                self._send_json(200, {"accepted": True, "duplicate": True, "state": row["state"]})
+                return
+            if row["state"] in ACTION_TERMINAL_STATES:
+                connection.rollback()
+                self._error(409, "action_already_finished", "A terminal action result has already been recorded.")
+                return
+            if row["state"] == "CLAIMED" and state not in {"RUNNING", "FAILED", "CANCELED", "INTERRUPTED"}:
+                connection.rollback()
+                self._error(409, "invalid_action_transition", "The runner must report RUNNING before this event.")
+                return
+            if row["state"] in {"REQUESTED", "EXPIRED"}:
+                connection.rollback()
+                self._error(409, "invalid_action_transition", "An unclaimed request cannot report results.")
+                return
+            try:
+                events = json.loads(row["events_json"])
+            except (json.JSONDecodeError, TypeError):
+                connection.rollback()
+                self._error(503, "action_state_unavailable", "The action event history could not be read.")
+                return
+            if not isinstance(events, list) or len(events) >= MAX_ACTION_EVENTS:
+                connection.rollback()
+                self._error(429, "too_many_action_events", "The action has reached its event limit.")
+                return
+            event = {"eventId": event_id, "state": state, "createdUtc": _utc_now()}
+            if step is not None:
+                event["step"] = step
+            if state in ACTION_TERMINAL_STATES:
+                result = self._validate_action_result(row["action"], payload["result"])
+                if result is None:
+                    connection.rollback()
+                    self._error(422, "invalid_action_result", "Action result does not match the bounded schema.")
+                    return
+                if row["action"] == "play-exec":
+                    outcome_known = result["data"]["executionOutcomeKnown"]
+                    if outcome_known == (state == "INTERRUPTED"):
+                        connection.rollback()
+                        self._error(422, "invalid_action_result", "Play + Exec outcome certainty does not match its terminal state.")
+                        return
+                event["result"] = result
+            events.append(event)
+            connection.execute(
+                "INSERT INTO action_events (request_hash, event_id, created_utc) VALUES (?, ?, ?)",
+                (request_hash, event_id, event["createdUtc"]),
+            )
+            connection.execute(
+                "UPDATE action_requests SET state = ?, events_json = ?, result_json = ? "
+                "WHERE request_hash = ?",
+                (
+                    state,
+                    _json_bytes(events).decode("utf-8"),
+                    _json_bytes(result).decode("utf-8") if result is not None else row["result_json"],
+                    request_hash,
+                ),
+            )
+            connection.commit()
+        self._send_json(200, {"accepted": True, "duplicate": False, "state": state})
+
+    @staticmethod
     def _revision_row(profile_name: str, revision: int | None = None) -> sqlite3.Row | None:
         with _connect() as connection:
             if revision is None:
@@ -315,6 +922,9 @@ class ApiHandler(BaseHTTPRequestHandler):
 
     def _send_viewer_asset(self, asset_name: str) -> None:
         assets = {
+            "app": ("app.html", "text/html; charset=utf-8"),
+            "app.css": ("app.css", "text/css; charset=utf-8"),
+            "app.js": ("app.js", "text/javascript; charset=utf-8"),
             "viewer": ("viewer.html", "text/html; charset=utf-8"),
             "viewer.css": ("viewer.css", "text/css; charset=utf-8"),
             "viewer.js": ("viewer.js", "text/javascript; charset=utf-8"),
@@ -332,7 +942,7 @@ class ApiHandler(BaseHTTPRequestHandler):
             self._error(503, "viewer_unavailable", "The profile viewer is unavailable.")
             return
         headers = {"Referrer-Policy": "no-referrer"}
-        if filename == "viewer.html":
+        if filename in {"app.html", "viewer.html"}:
             headers["Content-Security-Policy"] = (
                 "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; "
                 "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
@@ -344,11 +954,40 @@ class ApiHandler(BaseHTTPRequestHandler):
         parsed = urlsplit(self.path)
         parts = [unquote(part) for part in parsed.path.strip("/").split("/") if part]
 
-        if len(parts) == 1 and parts[0] in ("viewer", "viewer.css", "viewer.js", "status.css", "status.js"):
-            self._send_viewer_asset(parts[0])
+        if parts == ["v1", "actions", "session"]:
+            self._get_action_session()
+            return
+        if len(parts) == 3 and parts[:2] == ["v1", "actions"]:
+            if not self._check_action_origin():
+                return
+            browser = self._action_browser_session(require_csrf=False)
+            if browser is None:
+                return
+            session_hash, _session_row = browser
+            request_id = parts[2]
+            if not ACTION_ID.fullmatch(request_id):
+                self._error(404, "action_not_found", "Action request was not found.")
+                return
+            with _connect() as connection:
+                row = connection.execute(
+                    "SELECT * FROM action_requests WHERE request_hash = ? AND session_hash = ?",
+                    (self._action_hash(request_id), session_hash),
+                ).fetchone()
+            if row is None:
+                self._error(404, "action_not_found", "Action request was not found.")
+                return
+            self._send_action_state(row, request_id)
             return
 
         if not parts:
+            self._send_viewer_asset("app")
+            return
+
+        if len(parts) == 1 and parts[0] in ("app.css", "app.js", "viewer", "viewer.css", "viewer.js", "status.css", "status.js"):
+            self._send_viewer_asset(parts[0])
+            return
+
+        if parts == ["status"]:
             try:
                 with _connect() as connection:
                     profile_count = connection.execute(
@@ -723,6 +1362,20 @@ class ApiHandler(BaseHTTPRequestHandler):
             self._send_bytes(200, body, content_type, cache_control="public, max-age=31536000, immutable")
             return
 
+        self._error(404, "not_found", "Endpoint was not found.")
+
+    def do_POST(self) -> None:
+        parsed = urlsplit(self.path)
+        parts = [unquote(part) for part in parsed.path.strip("/").split("/") if part]
+        if parts == ["v1", "actions"]:
+            self._create_action_request()
+            return
+        if len(parts) == 4 and parts[:2] == ["v1", "actions"] and parts[3] == "claim":
+            self._claim_action_request(parts[2])
+            return
+        if len(parts) == 4 and parts[:2] == ["v1", "actions"] and parts[3] == "events":
+            self._post_action_event(parts[2])
+            return
         self._error(404, "not_found", "Endpoint was not found.")
 
     def do_PUT(self) -> None:

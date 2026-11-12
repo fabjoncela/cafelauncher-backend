@@ -352,8 +352,16 @@ class ApiTests(unittest.TestCase):
         }
         return self.request("/v1/profiles/FabMode/sync", method="PUT", body=json.dumps(payload).encode(), token=token)
 
-    def test_read_only_profile_viewer_is_served_by_backend(self) -> None:
-        status, _, home = self.request("/")
+    def test_web_app_status_page_and_profile_viewer_are_served(self) -> None:
+        status, headers, home = self.request("/")
+        self.assertEqual(status, 200)
+        self.assertIn("text/html", headers["Content-Type"])
+        self.assertIn(b"CafeLauncher", home)
+        self.assertIn(b"Detect this PC", home)
+        self.assertIn(b"Play + Exec", home)
+        self.assertIn(b"confirm-dialog", home)
+
+        status, _, home = self.request("/status")
         self.assertEqual(status, 200)
         self.assertIn(b'href="/viewer"', home)
         self.assertIn(b"Service healthy", home)
@@ -381,6 +389,8 @@ class ApiTests(unittest.TestCase):
         self.assertIn(b'id="load-history-button"', page)
 
         for path, expected_type in (
+            ("/app.css", "text/css"),
+            ("/app.js", "text/javascript"),
             ("/viewer.css", "text/css"),
             ("/viewer.js", "text/javascript"),
             ("/status.css", "text/css"),

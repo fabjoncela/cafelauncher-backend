@@ -12,7 +12,7 @@ The service provides anonymous read endpoints for profile bundles and release as
 - Twenty-five standard-library unit and HTTP integration tests cover validation, import, CFG serving, backup, sync conflicts/history, publishing retries, staged-release cleanup, asset integrity, and GitHub mirror ref-conflict/restart recovery.
 - `github_mirror.py` publishes an atomic public GitHub snapshot and keeps a durable SQLite generation marker for restart-safe retries.
 - CafeLauncher uses this API as its primary profile, graphics, CFG, and graphics-history source. When the API is unavailable, the launcher can read the public GitHub mirror; pending client edits remain local until the API returns.
-- The backend's root page is a responsive status dashboard with API health, profile count, latest profile save, mirror generation and last successful sync with relative age, backend-hosted releases, and deployed commit. It includes a copyable diagnostics summary, notes that the current launcher updater uses `Cs-script` on GitHub, and links to API docs, health JSON, the public mirror manifest, and the read-only profile viewer at `/viewer`.
+- In this local, undeployed checkout, `/` serves the optional CafeLauncher web action app, `/status` serves the prior status dashboard, and `/viewer` remains the read-only profile viewer. The action app is disabled for execution until `CAFELAUNCHER_ACTION_ORIGIN` is set and a compatible runner is installed on the client PC. The status page retains API health, profile count, latest profile save, mirror generation and last successful sync, backend-hosted releases, copyable diagnostics, and the deployed commit.
 - The backend is deployed on the Ubuntu server as two `systemd` services, with SQLite/assets under `/var/lib/cafelauncher-backend` and the API bound to `127.0.0.1:8090`. Its public HTTPS path is provided by the existing Tailscale Funnel route; see [`deploy/DEPLOYMENT.md`](deploy/DEPLOYMENT.md).
 - `.github/workflows/backend-ci-deploy.yml` runs tests on Python 3.10 and 3.14, then deploys successful `main` pushes through the dedicated server runner.
 - Backend CI checks viewer metadata against the current CafeLauncher source. CafeLauncher CI runs the same parity check when profile, graphics, or launcher schema files change. Launcher-supported fields and profiles must exist in the backend; the backend may add metadata before the matching launcher feature merges.
@@ -44,7 +44,9 @@ The server requires two different tokens at startup: one for profile sync and on
 
 ### Public reads
 
-The browser viewer at `/viewer` presents current profile values, graphics settings, and CFG text. Search filters current setting rows and CFG lines; profile comparison loads a consistent backend snapshot and displays only differences. Its “Profile saves” history lists every saved bundle revision and lazily displays the profile, graphics, and CFG values from that same save, with an option to filter unchanged profile/graphics values. It is read-only and requests the `/v1` endpoints listed below from the backend host.
+The web action app is served at `/` and presents Detect PC and Play + Exec requests. It uses the same-origin request/result API below, requires in-page confirmation for Play + Exec, opens the `cafelauncher://` protocol handler on the same PC, and displays bounded progress/results. The sibling CS-Script checkout now has local runner/action-mode source for both actions, but it is not published or café-validated. Configure `CAFELAUNCHER_ACTION_ORIGIN` only after focused API coverage and café deployment checks are ready.
+
+The status dashboard is at `/status`. The browser viewer at `/viewer` presents current profile values, graphics settings, and CFG text. Search filters current setting rows and CFG lines; profile comparison loads a consistent backend snapshot and displays only differences. Its “Profile saves” history lists every saved bundle revision and lazily displays the profile, graphics, and CFG values from that same save, with an option to filter unchanged profile/graphics values. It is read-only and requests the `/v1` endpoints listed below from the backend host.
 
 | Method and route | Response |
 | --- | --- |
@@ -66,6 +68,28 @@ The browser viewer at `/viewer` presents current profile values, graphics settin
 Profile, graphics, and CFG reads include an `ETag` and `X-Profile-Revision`. Mutable reads use `Cache-Control: no-cache`.
 
 The viewer fetches `/v1/viewer-schema` before loading profile data. The backend derives profile choices from its profile-to-CFG registry and serves display metadata alongside the API contract. Settings fields are rendered from API values and schema sections; field groups, friendly labels, and known enum values come from that metadata. If a launcher field or supported enum changes, update the backend validation and viewer metadata together.
+
+### Web action requests (local development; not deployed)
+
+The optional web-action protocol uses short-lived tickets and structured results. It does not use the public profile mirror and does not expose the profile-sync or release-publishing tokens.
+
+The API is disabled unless `CAFELAUNCHER_ACTION_ORIGIN` is configured to the exact HTTPS origin that serves the page, including a non-default port when present (for example, `https://cafelauncher.example:10000`). The service rejects requests from a different `Origin` and rejects cross-site Fetch Metadata. A same-origin browser session is anonymous; it does not authenticate a player. The page must confirm the selected action/profile before creating a state-changing request. The runner executes as the local Windows user and checks Steam/CS2 state itself.
+
+| Method and route | Purpose |
+| --- | --- |
+| `GET /v1/actions/session` | Create/refresh an `HttpOnly`, `Secure`, `SameSite=Strict` browser session and return a CSRF token for same-origin requests. |
+| `POST /v1/actions` | Create an allowlisted `detect-pc` or `play-exec` request using a browser-generated 256-bit base64url request ID. |
+| `POST /v1/actions/{requestId}/claim` | Atomically claim a request from the runner. A runner-generated one-use capability makes a retry idempotent. |
+| `POST /v1/actions/{requestId}/events` | Upload bounded progress steps and one terminal result using the claim capability. |
+| `GET /v1/actions/{requestId}` | Read request progress/result from the same browser session that created it. |
+
+Create body: `{"action":"detect-pc","profile":null,"clientRequestId":"<43-character base64url random ID>"}`. `play-exec` requires a registered `profile` name. The page obtains a CSRF token from the session route and sends it in `X-Cafe-CSRF`. The created request ID is the browser-generated ID; the database stores only its SHA-256 hash. If the response is lost, the page retries the same body and ID so one browser click cannot create a duplicate ticket.
+
+Claim body: `{"runnerVersion":"2026.11.12.1","protocolVersion":1,"claimCapability":"<runner-generated 43-character base64url value>"}`. The runner reuses that same capability if it must retry the claim request and then sends it as `Authorization: Bearer …` for result events. The server stores only its hash. Progress event body: `{"eventId":"<UUID>","state":"RUNNING","step":{"name":"Steam discovery","status":"SUCCESS","detail":"Steam detected."}}`. A terminal event has a terminal `state` and a bounded `result` object; its data shape is action-specific and rejects unknown fields.
+
+Request tickets expire after 90 seconds if unclaimed. A claimed run has a bounded 10-minute result-upload window, enough for the current runner's two-minute local action timeout and bounded HTTPS retries. A request with no final result after that window is reported as `INTERRUPTED`; the page must not launch it again automatically. Play + Exec results include `executionOutcomeKnown`; it must be `false` exactly when the runner reports `INTERRUPTED`. The page keeps actions locked until the player confirms they checked this PC. Request IDs and upload capabilities are stored as SHA-256 hashes and are redacted from HTTP access logs. Detection results may include the paths requested by the player, but exclude Steam account IDs. Other profile-edit/sync and cleanup actions are not enabled by this API.
+
+The code in this checkout is a local development change only. Do not set the production origin or deploy it until the browser app, runner, café session model, and focused API coverage are complete.
 
 ### Profile sync
 
