@@ -31,6 +31,11 @@ main { display: grid; gap: 14px; padding-bottom: 56px; }
 .intro-panel p:last-child { margin-bottom: 0; }
 .status-line { min-height: 22px; }
 .action-panel { display: flex; align-items: center; justify-content: space-between; gap: 22px; }
+.install-panel { display: flex; align-items: center; justify-content: space-between; gap: 22px; border-color: #365774; }
+.install-panel p:last-child { margin-bottom: 0; }
+.install-reset-note { font-size: 13px; }
+.install-button { flex: 0 0 auto; display: inline-block; border: 1px solid #467cad; border-radius: 8px; background: #276497; color: #fff; padding: 10px 16px; font-weight: 700; text-decoration: none; }
+.install-button:hover { background: #347bb2; }
 .action-panel p:last-child { margin-bottom: 0; }
 .profile-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
 label { font-weight: 650; }
@@ -53,4 +58,4 @@ select { min-width: 150px; border: 1px solid var(--border); border-radius: 7px; 
 .confirm-dialog p { color: var(--muted); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; }
 .secondary-button { border-color: var(--border); background: var(--raised); }
-@media (max-width: 640px) { .site-header { padding-top: 25px; } .action-panel { align-items: stretch; flex-direction: column; } .profile-controls { justify-content: flex-start; } }
+@media (max-width: 640px) { .site-header { padding-top: 25px; } .action-panel, .install-panel { align-items: stretch; flex-direction: column; } .profile-controls { justify-content: flex-start; } .install-button { align-self: flex-start; } }

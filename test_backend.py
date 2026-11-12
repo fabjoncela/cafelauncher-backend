@@ -429,6 +429,10 @@ class ApiTests(unittest.TestCase):
         self.assertIn(b"Detect this PC", home)
         self.assertIn(b"Play + Exec", home)
         self.assertIn(b"confirm-dialog", home)
+        self.assertIn(b'id="install-heading"', home)
+        self.assertIn(b"Download CafeLauncher", home)
+        self.assertIn(b"reboot", home)
+        self.assertIn(b"https://github.com/fabjoncela/Cs-script/releases/latest/download/CafeLauncherWebRunner.exe", home)
 
         status, _, home = self.request("/status")
         self.assertEqual(status, 200)
