@@ -322,6 +322,9 @@ function downloadActionLog() {
   const state = latestActionState;
   if (!state) return;
   const events = Array.isArray(state.events) ? state.events : [];
+  const createdAt = parseDiagnosticTime(state.createdUtc);
+  const reportDownloadedAt = new Date();
+  const observedAgeMs = createdAt === null ? null : reportDownloadedAt.getTime() - createdAt;
   const lines = [
     "CafeLauncher action report",
     `Action: ${actionLabels[state.action] || state.action || "Unknown"}`,
@@ -332,13 +335,27 @@ function downloadActionLog() {
     `Minimum runner version: ${state.minimumRunnerVersion || "Unknown"}`,
     `Runner update required: ${state.runnerUpdateRequired ? "Yes" : "No"}`,
     `Cancel requested: ${state.cancelRequestedUtc || (state.cancelRequested ? "Yes (time unavailable)" : "No")}`,
+    `Report downloaded (local): ${reportDownloadedAt.toISOString()}`,
+    `Request age at download (client clock estimate): ${formatElapsedMs(observedAgeMs)}`,
     "",
-    "Timeline:",
+    "Timeline (timestamps and intervals are server recorded):",
   ];
   if (events.length === 0) lines.push("  No runner events were received.");
+  let previousEventAt = null;
   for (const event of events) {
     const step = event.step;
-    lines.push(`  ${event.createdUtc || "Time unavailable"} · ${event.state || "EVENT"}${step ? ` · ${redactDiagnosticText(step.name)} · ${step.status} · ${redactDiagnosticText(step.detail)}` : ""}`);
+    const eventAt = parseDiagnosticTime(event.createdUtc);
+    const sincePrevious = previousEventAt === null || eventAt === null ? "unavailable" : formatElapsedMs(eventAt - previousEventAt);
+    const sinceCreated = createdAt === null || eventAt === null ? "unavailable" : formatElapsedMs(eventAt - createdAt);
+    lines.push(`  ${event.createdUtc || "Time unavailable"} · +${sincePrevious} since previous event · +${sinceCreated} since request · ${event.state || "EVENT"}${step ? ` · ${redactDiagnosticText(step.name)} · ${step.status} · ${redactDiagnosticText(step.detail)}` : ""}`);
+    if (eventAt !== null) previousEventAt = eventAt;
+  }
+  if (events.length > 0) {
+    const lastEventAt = parseDiagnosticTime(events.at(-1)?.createdUtc);
+    lines.push(`  Server-observed time to last event: ${createdAt === null || lastEventAt === null ? "unavailable" : formatElapsedMs(lastEventAt - createdAt)}`);
+    lines.push("  These intervals include runner work and network/server reporting delay; they are not CPU-only timings.");
+  } else {
+    lines.push("  With no events, the report cannot identify whether time was spent before the runner reported, during network communication, or in a local prompt.");
   }
   const result = state.result;
   if (result) {
@@ -355,6 +372,18 @@ function downloadActionLog() {
   link.download = `cafelauncher-action-${state.action || "report"}-${new Date().toISOString().replace(/[:.]/g, "-")}.txt`;
   link.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function parseDiagnosticTime(value) {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatElapsedMs(value) {
+  if (!Number.isFinite(value) || value < 0) return "unavailable";
+  if (value < 1000) return `${Math.round(value)} ms`;
+  return `${(value / 1000).toFixed(2)} s`;
 }
 
 function redactDiagnosticText(value) {
