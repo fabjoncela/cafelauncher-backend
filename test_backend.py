@@ -589,6 +589,9 @@ class ApiTests(unittest.TestCase):
                     self.assertIn(b"requestActionCancellation", body)
                     self.assertIn(b"downloadActionLog", body)
                     self.assertIn(b"redactDiagnosticText", body)
+                    self.assertIn(b"since previous event", body)
+                    self.assertIn(b"Server-observed time to last event", body)
+                    self.assertIn(b"formatElapsedMs", body)
                 if path == "/status.js":
                     self.assertIn(b"copyDiagnostics", body)
 
