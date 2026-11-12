@@ -34,26 +34,36 @@
       <a class="install-button" href="https://github.com/fabjoncela/Cs-script/releases/latest/download/CafeLauncherWebRunner.exe">Download CafeLauncher</a>
     </section>
 
-    <section class="panel action-panel" aria-labelledby="detect-heading">
+    <section class="panel profile-panel">
+      <label for="profile-select">Profile</label>
+      <select id="profile-select" disabled><option value="">Loading profiles…</option></select>
+    </section>
+
+    <section class="panel action-panel" aria-labelledby="apply-heading">
       <div>
-        <p class="eyebrow">READ ONLY</p>
-        <h2 id="detect-heading">Detect this PC</h2>
-        <p>Find the local Steam libraries and validated CS2 install.</p>
+        <p class="eyebrow">PROFILE ACTION</p>
+        <h2 id="apply-heading">1. Apply profile</h2>
+        <p>Apply the selected profile's Windows, NVIDIA, CFG, app, and mouse settings. Live Logitech DPI stays in the Windows app.</p>
       </div>
-      <button id="detect-button" type="button" disabled>Detect PC</button>
+      <button id="apply-profile-button" type="button" disabled>Apply profile</button>
+    </section>
+
+    <section class="panel action-panel" aria-labelledby="graphics-heading">
+      <div>
+        <p class="eyebrow">PROFILE ACTION</p>
+        <h2 id="graphics-heading">2. Apply game graphics</h2>
+        <p>Apply the selected profile's CS2 video settings and supported NVIDIA scaling.</p>
+      </div>
+      <button id="apply-graphics-button" type="button" disabled>Apply game graphics</button>
     </section>
 
     <section class="panel action-panel" aria-labelledby="play-heading">
       <div>
         <p class="eyebrow">PROFILE ACTION</p>
-        <h2 id="play-heading">Play + Exec</h2>
+        <h2 id="play-heading">3. Play + Exec</h2>
         <p>Install the selected profile's verified CFG and start CS2 through Steam.</p>
       </div>
-      <div class="profile-controls">
-        <label for="profile-select">Profile</label>
-        <select id="profile-select" disabled><option value="">Loading profiles…</option></select>
-        <button id="play-button" type="button" disabled>Play + Exec</button>
-      </div>
+      <button id="play-button" type="button" disabled>Play + Exec</button>
     </section>
 
     <section id="result-panel" class="panel result-panel" aria-labelledby="result-heading" hidden>

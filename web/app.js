@@ -1,9 +1,11 @@
 "use strict";
 
 const serviceStatus = document.querySelector("#service-status");
-const detectButton = document.querySelector("#detect-button");
+const applyProfileButton = document.querySelector("#apply-profile-button");
+const applyGraphicsButton = document.querySelector("#apply-graphics-button");
 const playButton = document.querySelector("#play-button");
 const profileSelect = document.querySelector("#profile-select");
+const actionButtons = [applyProfileButton, applyGraphicsButton, playButton];
 const resultPanel = document.querySelector("#result-panel");
 const protocolFallback = document.querySelector("#protocol-fallback");
 const protocolLink = document.querySelector("#protocol-link");
@@ -64,21 +66,18 @@ async function initialize() {
     }
     if (!profileSelect.options.length) throw new Error("No CafeLauncher profiles are available.");
     profileSelect.disabled = false;
-    detectButton.disabled = false;
-    playButton.disabled = false;
+    setActionsDisabled(false);
     setServiceStatus("Ready on this PC. Select an action to continue.", "ready");
     const pendingRequest = getPendingRequest();
     if (pendingRequest && /^[A-Za-z0-9_-]{43}$/.test(pendingRequest)) {
       activeRequest = true;
-      detectButton.disabled = true;
-      playButton.disabled = true;
+      setActionsDisabled(true);
       profileSelect.disabled = true;
       setServiceStatus("Reconnecting to the pending CafeLauncher action…", "working");
       const finished = await watchRequest(pendingRequest);
       if (finished) {
         activeRequest = false;
-        detectButton.disabled = false;
-        playButton.disabled = false;
+        setActionsDisabled(false);
         profileSelect.disabled = false;
       }
     }
@@ -94,10 +93,25 @@ function newRequestId() {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
-function confirmPlay(profile) {
-  document.querySelector("#confirm-title").textContent = `Play + Exec · ${profile}`;
-  document.querySelector("#confirm-description").textContent =
-    `CafeLauncher will verify the current ${profile} profile and CFG, install the reset baseline and profile CFG, then ask Steam to start CS2. Existing Windows and device prompts may still appear.`;
+function setActionsDisabled(disabled) {
+  for (const button of actionButtons) button.disabled = disabled;
+}
+
+const actionLabels = {
+  "apply-profile": "Apply profile",
+  "apply-graphics": "Apply game graphics",
+  "play-exec": "Play + Exec",
+};
+
+function confirmAction(action, profile) {
+  const label = actionLabels[action];
+  document.querySelector("#confirm-title").textContent = `${label} · ${profile}`;
+  const descriptions = {
+    "apply-profile": `CafeLauncher will apply the verified ${profile} profile to this Windows session. This can change mouse and NVIDIA settings, install the profile CFG, and open the profile's configured apps. Live Logitech DPI remains in the Windows app.`,
+    "apply-graphics": `CafeLauncher will apply the verified ${profile} CS2 video settings and supported NVIDIA scaling. CS2 must be closed.`,
+    "play-exec": `CafeLauncher will verify the current ${profile} profile and CFG, install the reset baseline and profile CFG, then ask Steam to start CS2.`,
+  };
+  document.querySelector("#confirm-description").textContent = descriptions[action];
   confirmDialog.showModal();
   return new Promise((resolve) => {
     confirmDialog.addEventListener("close", () => resolve(confirmDialog.returnValue === "confirm"), { once: true });
@@ -121,9 +135,7 @@ function renderResult(state) {
   else statePill.classList.add("warning");
 
   const title = document.querySelector("#result-heading");
-  title.textContent = state.action === "detect-pc"
-    ? "PC detection"
-    : `Play + Exec${state.profile ? ` · ${state.profile}` : ""}`;
+  title.textContent = `${actionLabels[state.action] || "CafeLauncher action"}${state.profile ? ` · ${state.profile}` : ""}`;
   const result = state.result;
   const fallbackSummary = state.state === "EXPIRED"
     ? "The runner did not claim this request before it expired. Check that CafeLauncher is installed on this PC, then retry."
@@ -207,8 +219,7 @@ unlockButton.addEventListener("click", () => {
   clearPendingRequest();
   activeRequest = false;
   unlockButton.hidden = true;
-  detectButton.disabled = false;
-  playButton.disabled = false;
+  setActionsDisabled(false);
   profileSelect.disabled = false;
   setServiceStatus("You confirmed this PC is ready for another action.", "ready");
 });
@@ -216,22 +227,19 @@ unlockButton.addEventListener("click", () => {
 async function startAction(action, profile = null) {
   if (activeRequest || !csrfToken) return;
   activeRequest = true;
-  detectButton.disabled = true;
-  playButton.disabled = true;
+  setActionsDisabled(true);
   profileSelect.disabled = true;
-  if (action === "play-exec") {
+  if (action !== "detect-pc") {
     try {
-      if (!(await confirmPlay(profile))) {
+      if (!(await confirmAction(action, profile))) {
         activeRequest = false;
-        detectButton.disabled = false;
-        playButton.disabled = false;
+        setActionsDisabled(false);
         profileSelect.disabled = false;
         return;
       }
     } catch (error) {
       activeRequest = false;
-      detectButton.disabled = false;
-      playButton.disabled = false;
+      setActionsDisabled(false);
       profileSelect.disabled = false;
       setServiceStatus(error.message, "error");
       return;
@@ -276,13 +284,13 @@ async function startAction(action, profile = null) {
   } finally {
     if (requestResolved && (!ticket || finished)) {
       activeRequest = false;
-      detectButton.disabled = false;
-      playButton.disabled = false;
+      setActionsDisabled(false);
       profileSelect.disabled = false;
     }
   }
 }
 
-detectButton.addEventListener("click", () => startAction("detect-pc"));
+applyProfileButton.addEventListener("click", () => startAction("apply-profile", profileSelect.value));
+applyGraphicsButton.addEventListener("click", () => startAction("apply-graphics", profileSelect.value));
 playButton.addEventListener("click", () => startAction("play-exec", profileSelect.value));
 initialize();

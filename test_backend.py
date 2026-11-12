@@ -379,6 +379,30 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(json.loads(response_body)["requestId"], request_id)
         return request_id, session_cookie, csrf
 
+    def test_web_profile_actions_require_known_profile_and_bounded_results(self) -> None:
+        valid = {
+            "summary": "CafeLauncher action finished.",
+            "steps": [{"name": "CS2 settings", "status": "SUCCESS", "detail": "Verified."}],
+            "data": {"executionOutcomeKnown": True},
+        }
+        for action in ("apply-profile", "apply-graphics"):
+            with self.subTest(action=action):
+                self.assertEqual(server.ApiHandler._validate_action_result(action, valid), valid)
+                self.assertIsNone(server.ApiHandler._validate_action_result(action, {
+                    **valid, "data": {"executionOutcomeKnown": True, "extra": "not allowed"}
+                }))
+                request_id, _session, _csrf = self.create_action(action, "FabMode")
+                self.assertTrue(request_id)
+
+        session_cookie, csrf = self.create_action_session()
+        request_id = base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("=")
+        body = json.dumps({"action": "apply-graphics", "profile": "Unknown", "clientRequestId": request_id}).encode()
+        status, _, _ = self.request(
+            "/v1/actions", method="POST", body=body,
+            headers=self.action_browser_headers(session_cookie, csrf),
+        )
+        self.assertEqual(status, 422)
+
     def test_web_action_concurrent_request_retries_create_one_ticket(self) -> None:
         session_cookie, csrf = self.create_action_session()
         request_id = base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("=")
@@ -426,8 +450,15 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("text/html", headers["Content-Type"])
         self.assertIn(b"CafeLauncher", home)
-        self.assertIn(b"Detect this PC", home)
+        self.assertIn(b"1. Apply profile", home)
+        self.assertIn(b"2. Apply game graphics", home)
+        self.assertIn(b"3. Play + Exec", home)
+        self.assertNotIn(b"Detect this PC", home)
+        self.assertNotIn(b"Capture CS2", home)
+        self.assertNotIn(b"Edit Profile", home)
         self.assertIn(b"Play + Exec", home)
+        self.assertIn(b'id="apply-profile-button"', home)
+        self.assertIn(b'id="apply-graphics-button"', home)
         self.assertIn(b"confirm-dialog", home)
         self.assertIn(b'id="install-heading"', home)
         self.assertIn(b"Download CafeLauncher", home)

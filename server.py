@@ -38,7 +38,12 @@ TOOL_VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 ACTION_ID = re.compile(r"[A-Za-z0-9_-]{43}\Z")
 ACTION_CLIENT_ID = re.compile(r"[A-Za-z0-9_-]{43}\Z")
 ACTION_EVENT_ID = re.compile(r"[0-9a-fA-F-]{36}\Z")
-ACTION_PROFILES = {"detect-pc": None, "play-exec": frozenset(PROFILE_CFG_FILES)}
+ACTION_PROFILES = {
+    "detect-pc": None,
+    "play-exec": frozenset(PROFILE_CFG_FILES),
+    "apply-profile": frozenset(PROFILE_CFG_FILES),
+    "apply-graphics": frozenset(PROFILE_CFG_FILES),
+}
 ACTION_SESSION_COOKIE = "CafeLauncherActionSession"
 ACTION_SESSION_TTL_SECONDS = 3600
 ACTION_REQUEST_TTL_SECONDS = 90
@@ -753,6 +758,12 @@ class ApiHandler(BaseHTTPRequestHandler):
                 "cfgName": cfg_name,
                 "consoleCommands": commands,
             }
+        elif action in {"apply-profile", "apply-graphics"}:
+            if not isinstance(data, dict) or set(data) != {"executionOutcomeKnown"}:
+                return None
+            if not isinstance(data["executionOutcomeKnown"], bool):
+                return None
+            normalized_data = {"executionOutcomeKnown": data["executionOutcomeKnown"]}
         else:
             return None
         return {"summary": summary, "steps": normalized_steps, "data": normalized_data}
@@ -855,7 +866,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                     connection.rollback()
                     self._error(422, "invalid_action_result", "Action result does not match the bounded schema.")
                     return
-                if row["action"] == "play-exec":
+                if row["action"] in {"play-exec", "apply-profile", "apply-graphics"}:
                     outcome_known = result["data"]["executionOutcomeKnown"]
                     if outcome_known == (state == "INTERRUPTED"):
                         connection.rollback()
