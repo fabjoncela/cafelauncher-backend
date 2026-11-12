@@ -69,7 +69,7 @@ Profile, graphics, and CFG reads include an `ETag` and `X-Profile-Revision`. Mut
 
 The viewer fetches `/v1/viewer-schema` before loading profile data. The backend derives profile choices from its profile-to-CFG registry and serves display metadata alongside the API contract. Settings fields are rendered from API values and schema sections; field groups, friendly labels, and known enum values come from that metadata. If a launcher field or supported enum changes, update the backend validation and viewer metadata together.
 
-### Web action requests (local development; not deployed)
+### Web action requests
 
 The optional web-action protocol uses short-lived tickets and structured results. It does not use the public profile mirror and does not expose the profile-sync or release-publishing tokens.
 
@@ -78,18 +78,18 @@ The API is disabled unless `CAFELAUNCHER_ACTION_ORIGIN` is configured to the exa
 | Method and route | Purpose |
 | --- | --- |
 | `GET /v1/actions/session` | Create/refresh an `HttpOnly`, `Secure`, `SameSite=Strict` browser session and return a CSRF token for same-origin requests. |
-| `POST /v1/actions` | Create an allowlisted `detect-pc` or `play-exec` request using a browser-generated 256-bit base64url request ID. |
-| `POST /v1/actions/{requestId}/claim` | Atomically claim a request from the runner. A runner-generated one-use capability makes a retry idempotent. |
+| `POST /v1/actions` | Create an allowlisted profile or PC-detection request using a browser-generated 256-bit base64url request ID. |
+| `POST /v1/actions/{requestId}/claim` | Check the runner version and atomically claim a compatible request. An outdated runner receives a terminal update-required result before it can claim or execute the action. |
 | `POST /v1/actions/{requestId}/events` | Upload bounded progress steps and one terminal result using the claim capability. |
 | `GET /v1/actions/{requestId}` | Read request progress/result from the same browser session that created it. |
 
 Create body: `{"action":"detect-pc","profile":null,"clientRequestId":"<43-character base64url random ID>"}`. `play-exec` requires a registered `profile` name. The page obtains a CSRF token from the session route and sends it in `X-Cafe-CSRF`. The created request ID is the browser-generated ID; the database stores only its SHA-256 hash. If the response is lost, the page retries the same body and ID so one browser click cannot create a duplicate ticket.
 
-Claim body: `{"runnerVersion":"2026.11.12.1","protocolVersion":1,"claimCapability":"<runner-generated 43-character base64url value>"}`. The runner reuses that same capability if it must retry the claim request and then sends it as `Authorization: Bearer …` for result events. The server stores only its hash. Progress event body: `{"eventId":"<UUID>","state":"RUNNING","step":{"name":"Steam discovery","status":"SUCCESS","detail":"Steam detected."}}`. A terminal event has a terminal `state` and a bounded `result` object; its data shape is action-specific and rejects unknown fields.
+Claim body: `{"runnerVersion":"0.6.0","protocolVersion":1,"claimCapability":"<runner-generated 43-character base64url value>"}`. The runner reuses that same capability if it must retry the claim request and then sends it as `Authorization: Bearer …` for result events. The server stores only its hash. Progress event body: `{"eventId":"<UUID>","state":"RUNNING","step":{"name":"Steam discovery","status":"SUCCESS","detail":"Steam detected."}}`. A terminal event has a terminal `state` and a bounded `result` object; its data shape is action-specific and rejects unknown fields.
 
 Request tickets expire after 90 seconds if unclaimed. A claimed run has a bounded 3-minute result-upload window: the runner stops a launcher subprocess after two minutes, and the remaining minute allows it to report the outcome. A request with no final result after that window is reported as `INTERRUPTED`; the page must not launch it again automatically. Play + Exec results include `executionOutcomeKnown`; it must be `false` exactly when the runner reports `INTERRUPTED`. The page keeps actions locked until the player confirms they checked this PC. Request IDs and upload capabilities are stored as SHA-256 hashes and are redacted from HTTP access logs. Detection results may include the paths requested by the player, but exclude Steam account IDs. Other profile-edit/sync and cleanup actions are not enabled by this API.
 
-The code in this checkout is a local development change only. Do not set the production origin or deploy it until the browser app, runner, café session model, and focused API coverage are complete.
+The deployed runner checks GitHub's immutable runner release manifest before claiming an action and updates itself side-by-side when a newer release is available. The backend requires runner v0.6.0 or newer; older runners are reported as out of date instead of leaving the page stuck in `CLAIMED`. Runners older than v0.5.0 do not have the updater and must be updated once by downloading and opening the latest runner from the home page.
 
 ### Profile sync
 

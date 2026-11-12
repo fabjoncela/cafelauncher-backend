@@ -403,6 +403,59 @@ class ApiTests(unittest.TestCase):
         )
         self.assertEqual(status, 422)
 
+    def test_web_action_rejects_outdated_runner_before_claim_with_update_result(self) -> None:
+        for action, profile in (
+            ("detect-pc", None),
+            ("apply-profile", "Provmode"),
+            ("apply-graphics", "Provmode"),
+            ("play-exec", "Provmode"),
+        ):
+            with self.subTest(action=action):
+                request_id, session_cookie, _csrf = self.create_action(action, profile)
+                capability = base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("=")
+                claim_body = json.dumps({
+                    "runnerVersion": "0.2.0",
+                    "protocolVersion": 1,
+                    "claimCapability": capability,
+                }).encode()
+                status, _, response = self.request(f"/v1/actions/{request_id}/claim", method="POST", body=claim_body)
+                self.assertEqual(status, 200)
+                payload = json.loads(response)
+                self.assertEqual(payload["state"], "FAILED")
+                self.assertEqual(payload["runnerVersion"], "0.2.0")
+                self.assertEqual(payload["minimumRunnerVersion"], server.MIN_WEB_ACTION_RUNNER_VERSION)
+                self.assertTrue(payload["runnerUpdateRequired"])
+                self.assertIn("open the latest CafeLauncher runner", payload["result"]["summary"])
+                self.assertEqual(payload["result"]["steps"][0]["name"], "Runner update")
+                self.assertTrue(payload["result"]["data"].get("executionOutcomeKnown", True))
+                self.assertEqual(
+                    server.ApiHandler._validate_action_result(action, payload["result"]), payload["result"]
+                )
+                state_status, _, state_body = self.request(
+                    f"/v1/actions/{request_id}", headers=self.action_browser_headers(session_cookie)
+                )
+                self.assertEqual(state_status, 200)
+                self.assertTrue(json.loads(state_body)["runnerUpdateRequired"])
+                with server._connect() as connection:
+                    row = connection.execute(
+                        "SELECT state, claim_capability_hash FROM action_requests WHERE request_hash = ?",
+                        (server.ApiHandler._action_hash(request_id),),
+                    ).fetchone()
+                self.assertEqual(row["state"], "FAILED")
+                self.assertIsNone(row["claim_capability_hash"])
+
+    def test_current_web_runner_version_can_claim(self) -> None:
+        request_id, _session_cookie, _csrf = self.create_action("apply-profile", "Provmode")
+        capability = base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("=")
+        claim_body = json.dumps({
+            "runnerVersion": server.MIN_WEB_ACTION_RUNNER_VERSION,
+            "protocolVersion": 1,
+            "claimCapability": capability,
+        }).encode()
+        status, _, response = self.request(f"/v1/actions/{request_id}/claim", method="POST", body=claim_body)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(response)["state"], "CLAIMED")
+
     def test_web_action_concurrent_request_retries_create_one_ticket(self) -> None:
         session_cookie, csrf = self.create_action_session()
         request_id = base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("=")
@@ -454,6 +507,8 @@ class ApiTests(unittest.TestCase):
         self.assertRegex(home.decode("utf-8"), r'datetime="20\d{2}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"')
         self.assertNotIn(b"@@APP_VERSION@@", home)
         self.assertNotIn(b"@@APP_UPDATED_UTC@@", home)
+        self.assertIn(b'id="update-runner-link"', home)
+        self.assertIn(b"Runner update required", self.request("/app.js")[2])
         self.assertIn(b"1. Apply profile", home)
         self.assertIn(b"2. Apply game graphics", home)
         self.assertIn(b"3. Play + Exec", home)
@@ -562,7 +617,7 @@ class ApiTests(unittest.TestCase):
 
         capability = base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("=")
         claim_body = json.dumps({
-            "runnerVersion": "0.1.0",
+            "runnerVersion": "0.6.0",
             "protocolVersion": 1,
             "claimCapability": capability,
         }).encode()
@@ -725,7 +780,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(json.loads(created)["profile"], "FabMode")
 
         capability = base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("=")
-        claim_body = json.dumps({"runnerVersion": "0.1.0", "protocolVersion": 1, "claimCapability": capability}).encode()
+        claim_body = json.dumps({"runnerVersion": "0.6.0", "protocolVersion": 1, "claimCapability": capability}).encode()
         status, _, _ = self.request(f"/v1/actions/{request_id}/claim", method="POST", body=claim_body)
         self.assertEqual(status, 200)
         status, _, _ = self.request(
@@ -773,7 +828,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(server.ACTION_RESULT_TTL_SECONDS, 180)
         request_id, session_cookie, _csrf = self.create_action("detect-pc")
         capability = base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("=")
-        claim_body = json.dumps({"runnerVersion": "0.1.0", "protocolVersion": 1, "claimCapability": capability}).encode()
+        claim_body = json.dumps({"runnerVersion": "0.6.0", "protocolVersion": 1, "claimCapability": capability}).encode()
         status, _, _ = self.request(f"/v1/actions/{request_id}/claim", method="POST", body=claim_body)
         self.assertEqual(status, 200)
 

@@ -13,6 +13,8 @@ const protocolLink = document.querySelector("#protocol-link");
 const unlockButton = document.querySelector("#unlock-button");
 const cancelActionButton = document.querySelector("#cancel-action-button");
 const downloadActionLogButton = document.querySelector("#download-action-log-button");
+const updateRunnerLink = document.querySelector("#update-runner-link");
+const updateRunnerNote = document.querySelector("#update-runner-note");
 const cancelNote = document.querySelector("#cancel-note");
 const confirmDialog = document.querySelector("#confirm-dialog");
 const recentStorageKey = "cafelauncher-recent-actions";
@@ -277,6 +279,8 @@ function renderResult(state) {
   cancelActionButton.disabled = Boolean(state.cancelRequested);
   cancelActionButton.textContent = state.cancelRequested ? "Stop requested…" : "Stop action";
   downloadActionLogButton.hidden = !state.requestId;
+  updateRunnerLink.hidden = !state.runnerUpdateRequired;
+  updateRunnerNote.hidden = !state.runnerUpdateRequired;
   cancelNote.hidden = terminal || !state.requestId;
   const fallbackSummary = state.state === "EXPIRED"
     ? "The runner did not claim this request before it expired. Check that CafeLauncher is installed on this PC, then retry."
@@ -325,6 +329,8 @@ function downloadActionLog() {
     `State: ${state.state || "Unknown"}`,
     `Created (UTC): ${state.createdUtc || "Unknown"}`,
     `Runner version: ${state.runnerVersion || "Unknown"}`,
+    `Minimum runner version: ${state.minimumRunnerVersion || "Unknown"}`,
+    `Runner update required: ${state.runnerUpdateRequired ? "Yes" : "No"}`,
     `Cancel requested: ${state.cancelRequestedUtc || (state.cancelRequested ? "Yes (time unavailable)" : "No")}`,
     "",
     "Timeline:",
