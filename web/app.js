@@ -157,6 +157,9 @@ function updateReadinessFromPcCheck(state) {
 function updateReadinessFromRunner(state) {
   if (typeof state.runnerVersion !== "string" || !state.runnerVersion) return;
   setReadiness("readiness-runner", `Connected · v${state.runnerVersion}`, "ready");
+  const runnerStatus = document.querySelector("#runner-status");
+  runnerStatus.textContent = `Runner ready · v${state.runnerVersion}`;
+  runnerStatus.dataset.state = "ready";
   if (document.querySelector("#readiness-overall").dataset.state === "unknown") {
     setReadinessOverall("Runner connected", "ready");
   }

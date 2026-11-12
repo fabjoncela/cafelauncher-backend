@@ -14,9 +14,11 @@
       <p class="eyebrow">CAFE LAUNCHER · WEB ACTIONS</p>
       <h1>Choose your setup</h1>
       <p class="subhead">Select a profile and run CafeLauncher on this PC.</p>
+      <button id="unlock-button" type="button" class="unlock-recovery-button" hidden>I checked this PC — allow another action</button>
     </div>
-    <div class="site-meta" aria-label="CafeLauncher version and update time">
+    <div class="site-meta" aria-label="CafeLauncher status and version information">
       <a class="status-link" href="/status">Backend status</a>
+      <span id="runner-status" class="runner-status" data-state="unknown" role="status" aria-live="polite">Runner not checked</span>
       <span class="site-version">Version v<span id="site-version">@@APP_VERSION@@</span></span>
       <span class="site-updated">Updated <time id="site-updated" datetime="@@APP_UPDATED_UTC@@">@@APP_UPDATED_UTC@@</time></span>
     </div>
@@ -86,7 +88,6 @@
         <button id="cancel-action-button" type="button" class="cancel-button" hidden>Stop action</button>
         <button id="download-action-log-button" type="button" class="secondary-button" hidden>Download action log</button>
         <a id="update-runner-link" class="install-button" href="https://github.com/fabjoncela/Cs-script/releases/latest/download/CafeLauncherWebRunner.exe" hidden>Download latest runner</a>
-        <button id="unlock-button" type="button" class="secondary-button" hidden>I checked this PC — allow another action</button>
       </div>
       <p id="update-runner-note" class="readiness-note" hidden>After it downloads, open CafeLauncherWebRunner.exe once to update this Windows account, then retry the action.</p>
       <p id="cancel-note" class="cancel-note" hidden>Stopping may interrupt an action after some settings have changed. Check this PC before retrying.</p>

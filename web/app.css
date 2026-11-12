@@ -25,8 +25,13 @@ h1, h2, p { margin-top: 0; }
 h1 { margin-bottom: 5px; font-size: clamp(28px, 4vw, 38px); letter-spacing: -.035em; }
 h2 { margin: 0 0 8px; font-size: 21px; }
 .subhead, .panel p { color: var(--muted); }
+.unlock-recovery-button { margin-top: 10px; border-color: #a97822; background: #6a4b13; color: #fff2cf; box-shadow: 0 0 0 2px #6a4b1333; }
+.unlock-recovery-button:hover:not(:disabled) { background: #89631b; }
+.unlock-recovery-button:focus-visible { outline: 3px solid var(--amber); outline-offset: 2px; }
 .site-meta { display: grid; justify-items: end; gap: 3px; max-width: 190px; color: var(--muted); font-size: 12px; line-height: 1.35; text-align: right; }
 .status-link { color: var(--accent); }
+.runner-status { padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 11px; }
+.runner-status[data-state="ready"] { border-color: #35694e; color: var(--green); }
 .site-version { color: var(--text); font-weight: 700; }
 .site-updated time { display: block; }
 main { display: grid; gap: 14px; padding-bottom: 56px; }
