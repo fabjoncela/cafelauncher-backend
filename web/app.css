@@ -85,6 +85,7 @@ select { min-width: 150px; border: 1px solid var(--border); border-radius: 7px; 
 .state-pill.warning { color: var(--amber); border-color: #735c2e; }
 .state-pill.failure { color: var(--red); border-color: #783a3a; }
 .result-summary { color: var(--text) !important; }
+.current-step-timing { color: var(--amber) !important; font-variant-numeric: tabular-nums; }
 .protocol-fallback { color: var(--muted) !important; }
 .protocol-fallback a { color: var(--accent); font-weight: 700; }
 .result-steps { padding-left: 22px; }
