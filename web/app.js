@@ -359,6 +359,7 @@ async function startAction(action, profile = null) {
         activeRequest = false;
         setActionsDisabled(false);
         profileSelect.disabled = false;
+        setServiceStatus("Action canceled before it started.", "notice");
         return;
       }
     } catch (error) {

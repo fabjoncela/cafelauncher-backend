@@ -47,7 +47,9 @@ ACTION_PROFILES = {
 ACTION_SESSION_COOKIE = "CafeLauncherActionSession"
 ACTION_SESSION_TTL_SECONDS = 3600
 ACTION_REQUEST_TTL_SECONDS = 90
-ACTION_RESULT_TTL_SECONDS = 600
+# The local runner stops a launcher subprocess after 120 seconds. Keep a short
+# reporting margin so a lost runner result becomes INTERRUPTED promptly.
+ACTION_RESULT_TTL_SECONDS = 180
 MAX_ACTION_BODY_BYTES = 16 * 1024
 MAX_ACTION_DETAIL_CHARS = 1000
 MAX_ACTION_EVENTS = 64
