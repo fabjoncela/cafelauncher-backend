@@ -113,6 +113,15 @@ def _data_dir() -> Path:
     return Path(configured).expanduser().resolve() if configured else Path(__file__).resolve().parent / "data"
 
 
+def _app_page_updated_utc() -> str:
+    app_page = Path(__file__).resolve().parent / "web" / "app.html"
+    try:
+        modified_at = app_page.stat().st_mtime
+    except OSError:
+        return ""
+    return datetime.fromtimestamp(modified_at, timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 def _db_path() -> Path:
     return _data_dir() / "cafelauncher.sqlite3"
 
@@ -1054,6 +1063,9 @@ class ApiHandler(BaseHTTPRequestHandler):
                 "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
             )
             headers["X-Frame-Options"] = "DENY"
+        if filename == "app.html":
+            body = body.replace(b"@@APP_VERSION@@", html.escape(APP_VERSION).encode("ascii"))
+            body = body.replace(b"@@APP_UPDATED_UTC@@", _app_page_updated_utc().encode("ascii"))
         self._send_bytes(200, body, content_type, cache_control="no-cache", headers=headers)
 
     def do_GET(self) -> None:
