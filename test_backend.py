@@ -379,6 +379,39 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(json.loads(response_body)["requestId"], request_id)
         return request_id, session_cookie, csrf
 
+    def test_web_action_concurrent_request_retries_create_one_ticket(self) -> None:
+        session_cookie, csrf = self.create_action_session()
+        request_id = base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("=")
+        body = json.dumps({"action": "detect-pc", "profile": None, "clientRequestId": request_id}).encode()
+        headers = self.action_browser_headers(session_cookie, csrf)
+        barrier = threading.Barrier(3)
+        responses: list[tuple[int, bytes]] = []
+
+        def create_request() -> None:
+            barrier.wait(timeout=5)
+            status, _, response_body = self.request(
+                "/v1/actions", method="POST", body=body, headers=headers
+            )
+            responses.append((status, response_body))
+
+        workers = [threading.Thread(target=create_request) for _ in range(2)]
+        for worker in workers:
+            worker.start()
+        barrier.wait(timeout=5)
+        for worker in workers:
+            worker.join(timeout=10)
+
+        self.assertTrue(all(not worker.is_alive() for worker in workers))
+        self.assertEqual(sorted(status for status, _ in responses), [200, 201])
+        self.assertEqual({json.loads(response)["requestId"] for _, response in responses}, {request_id})
+        with server._connect() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS count, MIN(state) AS state FROM action_requests WHERE request_hash = ?",
+                (server.ApiHandler._action_hash(request_id),),
+            ).fetchone()
+        self.assertEqual(row["count"], 1)
+        self.assertEqual(row["state"], "REQUESTED")
+
     def put_bundle(self, expected_revision: int, *, token: str | None = None, profile: dict | None = None, graphics: dict | None = None, cfg: str = 'sensitivity "1.2"\n'):
         payload = {
             "expectedRevision": expected_revision,
