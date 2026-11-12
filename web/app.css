@@ -27,6 +27,8 @@ h2 { margin: 0 0 8px; font-size: 21px; }
 .subhead, .panel p { color: var(--muted); }
 .site-meta { display: grid; justify-items: end; gap: 3px; max-width: 190px; color: var(--muted); font-size: 12px; line-height: 1.35; text-align: right; }
 .status-link { color: var(--accent); }
+.runner-status { padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 11px; }
+.runner-status[data-state="ready"] { border-color: #35694e; color: var(--green); }
 .site-version { color: var(--text); font-weight: 700; }
 .site-updated time { display: block; }
 main { display: grid; gap: 14px; padding-bottom: 56px; }
