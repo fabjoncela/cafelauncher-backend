@@ -313,6 +313,7 @@ class ApiTests(unittest.TestCase):
                 "CAFELAUNCHER_DATA_DIR": self.temp.name,
                 "CAFELAUNCHER_SYNC_TOKEN": "sync-token-" + "s" * 40,
                 "CAFELAUNCHER_PUBLISH_TOKEN": "publish-token-" + "p" * 40,
+                "CAFELAUNCHER_ACTION_ORIGIN": "https://cafelauncher.example:10000",
             },
             clear=False,
         )
@@ -330,8 +331,8 @@ class ApiTests(unittest.TestCase):
         self.environment.stop()
         self.temp.cleanup()
 
-    def request(self, path: str, *, method: str = "GET", body: bytes | None = None, token: str | None = None, content_type: str = "application/json"):
-        headers = {}
+    def request(self, path: str, *, method: str = "GET", body: bytes | None = None, token: str | None = None, content_type: str = "application/json", headers: dict[str, str] | None = None):
+        headers = dict(headers or {})
         if token:
             headers["Authorization"] = f"Bearer {token}"
         if body is not None:
@@ -342,6 +343,41 @@ class ApiTests(unittest.TestCase):
                 return response.status, response.headers, response.read()
         except HTTPError as error:
             return error.code, error.headers, error.read()
+
+    def create_action_session(self) -> tuple[str, str]:
+        status, headers, body = self.request(
+            "/v1/actions/session",
+            headers={"Origin": "https://cafelauncher.example:10000", "Sec-Fetch-Site": "same-origin"},
+        )
+        self.assertEqual(status, 200)
+        session_cookie = headers["Set-Cookie"].split(";", 1)[0]
+        self.assertIn("; Secure; HttpOnly; SameSite=Strict", headers["Set-Cookie"])
+        return session_cookie, json.loads(body)["csrfToken"]
+
+    @staticmethod
+    def action_browser_headers(session_cookie: str, csrf: str | None = None, *, origin: str = "https://cafelauncher.example:10000") -> dict[str, str]:
+        headers = {
+            "Origin": origin,
+            "Sec-Fetch-Site": "same-origin",
+            "Cookie": session_cookie,
+        }
+        if csrf is not None:
+            headers["X-Cafe-CSRF"] = csrf
+        return headers
+
+    def create_action(self, action: str, profile: str | None = None) -> tuple[str, str, str]:
+        session_cookie, csrf = self.create_action_session()
+        request_id = base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("=")
+        body = json.dumps({"action": action, "profile": profile, "clientRequestId": request_id}).encode()
+        status, _, response_body = self.request(
+            "/v1/actions",
+            method="POST",
+            body=body,
+            headers=self.action_browser_headers(session_cookie, csrf),
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(json.loads(response_body)["requestId"], request_id)
+        return request_id, session_cookie, csrf
 
     def put_bundle(self, expected_revision: int, *, token: str | None = None, profile: dict | None = None, graphics: dict | None = None, cfg: str = 'sensitivity "1.2"\n'):
         payload = {
@@ -422,6 +458,217 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(schema["profiles"][-1], {"name": "Provmode", "cfg": "prov.cfg"})
         self.assertIn("graphicsSettings", {section["id"] for section in schema["sections"]})
         self.assertEqual(schema["fields"]["NvidiaReflex"]["values"]["2"], "Enabled + Boost")
+
+    def test_web_action_session_ticket_claim_and_detect_result_roundtrip(self) -> None:
+        session_cookie, csrf = self.create_action_session()
+        request_id = base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("=")
+        create_body = json.dumps({"action": "detect-pc", "profile": None, "clientRequestId": request_id}).encode()
+        browser_headers = self.action_browser_headers(session_cookie, csrf)
+        status, _, created = self.request("/v1/actions", method="POST", body=create_body, headers=browser_headers)
+        self.assertEqual(status, 201)
+        self.assertEqual(json.loads(created)["state"], "REQUESTED")
+
+        status, _, retried = self.request("/v1/actions", method="POST", body=create_body, headers=browser_headers)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(retried)["requestId"], request_id)
+
+        capability = base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("=")
+        claim_body = json.dumps({
+            "runnerVersion": "0.1.0",
+            "protocolVersion": 1,
+            "claimCapability": capability,
+        }).encode()
+        status, _, claimed = self.request(f"/v1/actions/{request_id}/claim", method="POST", body=claim_body)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(claimed)["state"], "CLAIMED")
+        status, _, retried_claim = self.request(f"/v1/actions/{request_id}/claim", method="POST", body=claim_body)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(retried_claim)["requestId"], request_id)
+
+        progress = {
+            "eventId": "11111111-1111-4111-8111-111111111111",
+            "state": "RUNNING",
+            "step": {"name": "PC discovery", "status": "RUNNING", "detail": "Detecting local paths."},
+        }
+        status, _, _ = self.request(
+            f"/v1/actions/{request_id}/events",
+            method="POST",
+            body=json.dumps(progress).encode(),
+            headers={"Authorization": f"Bearer {capability}"},
+        )
+        self.assertEqual(status, 200)
+
+        detect_result = {
+            "summary": "PC detection completed for the current Windows user.",
+            "steps": [
+                {"name": "Steam discovery", "status": "SUCCESS", "detail": "Steam detected."},
+                {"name": "CS2 path discovery", "status": "SUCCESS", "detail": "A unique config path was detected."},
+            ],
+            "data": {
+                "steam": {
+                    "status": "DETECTED",
+                    "executable": "C:\\Steam\\steam.exe",
+                    "libraries": ["C:\\SteamLibrary"],
+                    "activeSessionPresent": True,
+                },
+                "cs2": {
+                    "status": "DETECTED",
+                    "installPath": "C:\\SteamLibrary\\steamapps\\common\\Counter-Strike Global Offensive",
+                    "configPath": "C:\\SteamLibrary\\steamapps\\common\\Counter-Strike Global Offensive\\game\\csgo\\cfg",
+                },
+            },
+        }
+        terminal = {
+            "eventId": "22222222-2222-4222-8222-222222222222",
+            "state": "COMPLETED",
+            "result": detect_result,
+        }
+        status, _, accepted = self.request(
+            f"/v1/actions/{request_id}/events",
+            method="POST",
+            body=json.dumps(terminal).encode(),
+            headers={"Authorization": f"Bearer {capability}"},
+        )
+        self.assertEqual(status, 200)
+        self.assertFalse(json.loads(accepted)["duplicate"])
+        status, _, duplicate = self.request(
+            f"/v1/actions/{request_id}/events",
+            method="POST",
+            body=json.dumps(terminal).encode(),
+            headers={"Authorization": f"Bearer {capability}"},
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(duplicate)["duplicate"])
+
+        status, _, state = self.request(
+            f"/v1/actions/{request_id}", headers=self.action_browser_headers(session_cookie)
+        )
+        self.assertEqual(status, 200)
+        state_payload = json.loads(state)
+        self.assertEqual(state_payload["state"], "COMPLETED")
+        self.assertEqual(state_payload["result"]["data"], detect_result["data"])
+
+        other_session, _ = self.create_action_session()
+        status, _, _ = self.request(
+            f"/v1/actions/{request_id}", headers=self.action_browser_headers(other_session)
+        )
+        self.assertEqual(status, 404)
+
+    def test_web_action_rejects_cross_origin_bad_csrf_and_uncertain_state_mismatch(self) -> None:
+        status, _, _ = self.request(
+            "/v1/actions/session",
+            headers={"Origin": "https://attacker.example", "Sec-Fetch-Site": "cross-site"},
+        )
+        self.assertEqual(status, 403)
+        with patch.dict(os.environ, {"CAFELAUNCHER_ACTION_ORIGIN": ""}):
+            status, _, _ = self.request(
+                "/v1/actions/session",
+                headers={"Origin": "https://cafelauncher.example:10000", "Sec-Fetch-Site": "same-origin"},
+            )
+        self.assertEqual(status, 503)
+
+        session_cookie, csrf = self.create_action_session()
+        request_id = base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("=")
+        create_body = json.dumps({"action": "play-exec", "profile": "FabMode", "clientRequestId": request_id}).encode()
+        status, _, _ = self.request(
+            "/v1/actions", method="POST", body=create_body,
+            headers=self.action_browser_headers(session_cookie, "A" * 43),
+        )
+        self.assertEqual(status, 403)
+        status, _, _ = self.request(
+            "/v1/actions", method="POST", body=create_body,
+            headers=self.action_browser_headers(session_cookie, csrf, origin="https://attacker.example"),
+        )
+        self.assertEqual(status, 403)
+        status, _, created = self.request(
+            "/v1/actions", method="POST", body=create_body,
+            headers=self.action_browser_headers(session_cookie, csrf),
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(json.loads(created)["profile"], "FabMode")
+
+        capability = base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("=")
+        claim_body = json.dumps({"runnerVersion": "0.1.0", "protocolVersion": 1, "claimCapability": capability}).encode()
+        status, _, _ = self.request(f"/v1/actions/{request_id}/claim", method="POST", body=claim_body)
+        self.assertEqual(status, 200)
+        status, _, _ = self.request(
+            f"/v1/actions/{request_id}/events",
+            method="POST",
+            body=json.dumps({"eventId": "33333333-3333-4333-8333-333333333333", "state": "RUNNING"}).encode(),
+            headers={"Authorization": f"Bearer {capability}"},
+        )
+        self.assertEqual(status, 200)
+
+        uncertain_result = {
+            "summary": "Outcome is uncertain.",
+            "steps": [],
+            "data": {
+                "steamLaunchRequested": False,
+                "cs2AlreadyRunning": False,
+                "executionOutcomeKnown": False,
+                "cfgName": "fab.cfg",
+                "consoleCommands": [],
+            },
+        }
+        terminal = {
+            "eventId": "44444444-4444-4444-8444-444444444444",
+            "state": "FAILED",
+            "result": uncertain_result,
+        }
+        status, _, _ = self.request(
+            f"/v1/actions/{request_id}/events",
+            method="POST",
+            body=json.dumps(terminal).encode(),
+            headers={"Authorization": f"Bearer {capability}"},
+        )
+        self.assertEqual(status, 422)
+        terminal["state"] = "INTERRUPTED"
+        status, _, accepted = self.request(
+            f"/v1/actions/{request_id}/events",
+            method="POST",
+            body=json.dumps(terminal).encode(),
+            headers={"Authorization": f"Bearer {capability}"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(accepted)["state"], "INTERRUPTED")
+
+    def test_web_action_upload_expiry_becomes_interrupted_and_rejects_late_results(self) -> None:
+        request_id, session_cookie, _csrf = self.create_action("detect-pc")
+        capability = base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("=")
+        claim_body = json.dumps({"runnerVersion": "0.1.0", "protocolVersion": 1, "claimCapability": capability}).encode()
+        status, _, _ = self.request(f"/v1/actions/{request_id}/claim", method="POST", body=claim_body)
+        self.assertEqual(status, 200)
+
+        with server._connect() as connection:
+            connection.execute(
+                "UPDATE action_requests SET upload_expires_at = ? WHERE request_hash = ?",
+                (0, server.ApiHandler._action_hash(request_id)),
+            )
+            connection.commit()
+
+        status, _, state = self.request(
+            f"/v1/actions/{request_id}", headers=self.action_browser_headers(session_cookie)
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(state)["state"], "INTERRUPTED")
+
+        status, _, _ = self.request(f"/v1/actions/{request_id}/claim", method="POST", body=claim_body)
+        self.assertEqual(status, 409)
+        late_result = {
+            "summary": "Late result.",
+            "steps": [],
+            "data": {
+                "steam": {"status": "NOT_DETECTED", "executable": None, "libraries": [], "activeSessionPresent": False},
+                "cs2": {"status": "NOT_UNIQUELY_DETECTED", "installPath": None, "configPath": None},
+            },
+        }
+        status, _, _ = self.request(
+            f"/v1/actions/{request_id}/events",
+            method="POST",
+            body=json.dumps({"eventId": "55555555-5555-4555-8555-555555555555", "state": "FAILED", "result": late_result}).encode(),
+            headers={"Authorization": f"Bearer {capability}"},
+        )
+        self.assertEqual(status, 410)
 
     def test_health_reports_database_unavailable(self) -> None:
         with patch.object(server, "_connect", side_effect=sqlite3.OperationalError("simulated storage outage")):
