@@ -459,6 +459,8 @@ class ApiTests(unittest.TestCase):
         self.assertIn(b"Play + Exec", home)
         self.assertIn(b'id="apply-profile-button"', home)
         self.assertIn(b'id="apply-graphics-button"', home)
+        self.assertIn(b'id="cancel-action-button"', home)
+        self.assertIn(b'id="download-action-log-button"', home)
         self.assertIn(b"confirm-dialog", home)
         self.assertIn(b'id="install-heading"', home)
         self.assertIn(b"Download CafeLauncher", home)
@@ -524,6 +526,10 @@ class ApiTests(unittest.TestCase):
                     self.assertIn(b"Download saved CFG", body)
                     self.assertIn(b"current-cfg-actions", body)
                     self.assertIn(b"renderProfileComparison", body)
+                if path == "/app.js":
+                    self.assertIn(b"requestActionCancellation", body)
+                    self.assertIn(b"downloadActionLog", body)
+                    self.assertIn(b"redactDiagnosticText", body)
                 if path == "/status.js":
                     self.assertIn(b"copyDiagnostics", body)
 
@@ -631,6 +637,55 @@ class ApiTests(unittest.TestCase):
             f"/v1/actions/{request_id}", headers=self.action_browser_headers(other_session)
         )
         self.assertEqual(status, 404)
+
+    def test_web_action_cancel_is_session_bound_and_runner_can_read_flag(self) -> None:
+        request_id, session_cookie, csrf = self.create_action("apply-graphics", "FabMode")
+        browser_headers = self.action_browser_headers(session_cookie, csrf)
+        browser_headers["Content-Type"] = "application/json"
+        status, _, canceled = self.request(
+            f"/v1/actions/{request_id}/cancel", method="POST", body=b"{}", headers=browser_headers
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(canceled)["state"], "CANCELED")
+        self.assertTrue(json.loads(canceled)["cancelRequested"])
+        status, _, claim_error = self.request(
+            f"/v1/actions/{request_id}/claim",
+            method="POST",
+            body=json.dumps({"runnerVersion": "0.6.0", "protocolVersion": 1, "claimCapability": "A" * 43}).encode(),
+        )
+        self.assertEqual(status, 409)
+        self.assertEqual(json.loads(claim_error)["error"], "action_not_claimable")
+
+        running_id, running_cookie, running_csrf = self.create_action("apply-graphics", "FabMode")
+        capability = base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("=")
+        claim_body = json.dumps({"runnerVersion": "0.6.0", "protocolVersion": 1, "claimCapability": capability}).encode()
+        status, _, _ = self.request(f"/v1/actions/{running_id}/claim", method="POST", body=claim_body)
+        self.assertEqual(status, 200)
+        status, _, initial = self.request(
+            f"/v1/actions/{running_id}/control", headers={"Authorization": f"Bearer {capability}"}
+        )
+        self.assertEqual(status, 200)
+        self.assertFalse(json.loads(initial)["cancelRequested"])
+        status, _, pending = self.request(
+            f"/v1/actions/{running_id}/cancel", method="POST", body=b"{}",
+            headers={**self.action_browser_headers(running_cookie, running_csrf), "Content-Type": "application/json"},
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(pending)["cancelRequested"])
+        status, _, control = self.request(
+            f"/v1/actions/{running_id}/control", headers={"Authorization": f"Bearer {capability}"}
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(control)["cancelRequested"])
+        status, _, state = self.request(
+            f"/v1/actions/{running_id}", headers=self.action_browser_headers(running_cookie)
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(state)["cancelRequested"])
+        status, _, _ = self.request(
+            f"/v1/actions/{running_id}/control", headers={"Authorization": f"Bearer {'B' * 43}"}
+        )
+        self.assertEqual(status, 401)
 
     def test_web_action_rejects_cross_origin_bad_csrf_and_uncertain_state_mismatch(self) -> None:
         status, _, _ = self.request(

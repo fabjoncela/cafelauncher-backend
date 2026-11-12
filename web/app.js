@@ -11,11 +11,15 @@ const resultPanel = document.querySelector("#result-panel");
 const protocolFallback = document.querySelector("#protocol-fallback");
 const protocolLink = document.querySelector("#protocol-link");
 const unlockButton = document.querySelector("#unlock-button");
+const cancelActionButton = document.querySelector("#cancel-action-button");
+const downloadActionLogButton = document.querySelector("#download-action-log-button");
+const cancelNote = document.querySelector("#cancel-note");
 const confirmDialog = document.querySelector("#confirm-dialog");
 const recentStorageKey = "cafelauncher-recent-actions";
 const terminalStates = new Set(["COMPLETED", "PARTIAL", "SKIPPED", "FAILED", "CANCELED", "EXPIRED", "INTERRUPTED"]);
 let csrfToken = "";
 let activeRequest = false;
+let latestActionState = null;
 
 function setServiceStatus(message, kind = "") {
   serviceStatus.textContent = message;
@@ -242,6 +246,7 @@ document.querySelector("#confirm-cancel").addEventListener("click", () => confir
 document.querySelector("#confirm-accept").addEventListener("click", () => confirmDialog.close("confirm"));
 
 function renderResult(state) {
+  latestActionState = state;
   resultPanel.hidden = false;
   protocolFallback.hidden = state.state !== "REQUESTED";
   if (state.state === "REQUESTED") {
@@ -257,10 +262,18 @@ function renderResult(state) {
   const title = document.querySelector("#result-heading");
   title.textContent = `${actionLabels[state.action] || "CafeLauncher action"}${state.profile ? ` · ${state.profile}` : ""}`;
   const result = state.result;
+  const terminal = terminalStates.has(state.state);
+  cancelActionButton.hidden = terminal || !state.requestId;
+  cancelActionButton.disabled = Boolean(state.cancelRequested);
+  cancelActionButton.textContent = state.cancelRequested ? "Stop requested…" : "Stop action";
+  downloadActionLogButton.hidden = !state.requestId;
+  cancelNote.hidden = terminal || !state.requestId;
   const fallbackSummary = state.state === "EXPIRED"
     ? "The runner did not claim this request before it expired. Check that CafeLauncher is installed on this PC, then retry."
+    : state.state === "CANCELED"
+      ? "The action was canceled before it started."
     : state.state === "INTERRUPTED"
-      ? "The runner stopped without a final result. Check this PC before retrying."
+      ? "The runner stopped without a final result. The action may have partly changed this PC; check it before retrying."
       : "The runner has not reported a final result yet.";
   document.querySelector("#result-summary").textContent = result?.summary || fallbackSummary;
 
@@ -289,6 +302,49 @@ function renderResult(state) {
     data.hidden = true;
     data.textContent = "";
   }
+}
+
+function downloadActionLog() {
+  const state = latestActionState;
+  if (!state) return;
+  const events = Array.isArray(state.events) ? state.events : [];
+  const lines = [
+    "CafeLauncher action report",
+    `Action: ${actionLabels[state.action] || state.action || "Unknown"}`,
+    `Profile: ${state.profile || "None"}`,
+    `State: ${state.state || "Unknown"}`,
+    `Created (UTC): ${state.createdUtc || "Unknown"}`,
+    `Runner version: ${state.runnerVersion || "Unknown"}`,
+    `Cancel requested: ${state.cancelRequestedUtc || (state.cancelRequested ? "Yes (time unavailable)" : "No")}`,
+    "",
+    "Timeline:",
+  ];
+  if (events.length === 0) lines.push("  No runner events were received.");
+  for (const event of events) {
+    const step = event.step;
+    lines.push(`  ${event.createdUtc || "Time unavailable"} · ${event.state || "EVENT"}${step ? ` · ${redactDiagnosticText(step.name)} · ${step.status} · ${redactDiagnosticText(step.detail)}` : ""}`);
+  }
+  const result = state.result;
+  if (result) {
+    lines.push("", `Summary: ${redactDiagnosticText(result.summary || "No summary returned.")}`, "Result steps:");
+    const steps = Array.isArray(result.steps) ? result.steps : [];
+    if (steps.length === 0) lines.push("  No result steps returned.");
+    for (const step of steps) lines.push(`  ${step.status || "UNKNOWN"} · ${redactDiagnosticText(step.name || "Unnamed step")} · ${redactDiagnosticText(step.detail)}`);
+  }
+  lines.push("", "Local paths, device identifiers, and raw result data are omitted from this report.");
+  const blob = new Blob([lines.join("\n") + "\n"], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `cafelauncher-action-${state.action || "report"}-${new Date().toISOString().replace(/[:.]/g, "-")}.txt`;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function redactDiagnosticText(value) {
+  return String(value || "")
+    .replace(/(?:\b[A-Za-z]:\\|\\\\)[^\r\n"'<>|?*]*/g, "[local path]")
+    .replace(/\b\d{17}\b/g, "[account id]");
 }
 
 async function watchRequest(requestId) {
@@ -338,6 +394,37 @@ async function watchRequest(requestId) {
     delay = Math.min(3000, delay + 400);
   }
 }
+
+async function requestActionCancellation() {
+  const state = latestActionState;
+  if (!state?.requestId || terminalStates.has(state.state) || state.cancelRequested) return;
+  if (!window.confirm("Ask CafeLauncher on this PC to stop? It may have already applied some settings. If the result is interrupted, check the PC before running another action.")) return;
+  cancelActionButton.disabled = true;
+  cancelActionButton.textContent = "Sending stop request…";
+  try {
+    const response = await readJson(await fetch(`/v1/actions/${encodeURIComponent(state.requestId)}/cancel`, {
+      method: "POST",
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: { "Content-Type": "application/json", "X-Cafe-CSRF": csrfToken },
+      body: "{}",
+    }));
+    if (response.cancelRequested) {
+      renderResult({ ...state, state: response.state, cancelRequested: true, cancelRequestedUtc: state.cancelRequestedUtc || new Date().toISOString() });
+      setServiceStatus(response.state === "CANCELED" ? "Canceled before the runner started." : "Stop requested. Waiting for the PC runner to respond…", "notice");
+    } else {
+      cancelActionButton.hidden = true;
+      setServiceStatus(`The action already finished with state ${response.state}. Loading its result…`, "notice");
+    }
+  } catch (error) {
+    cancelActionButton.disabled = false;
+    cancelActionButton.textContent = "Stop action";
+    setServiceStatus(`Could not send the stop request: ${error.message}`, "error");
+  }
+}
+
+cancelActionButton.addEventListener("click", requestActionCancellation);
+downloadActionLogButton.addEventListener("click", downloadActionLog);
 
 unlockButton.addEventListener("click", () => {
   clearPendingRequest();
