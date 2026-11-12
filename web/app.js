@@ -4,13 +4,16 @@ const serviceStatus = document.querySelector("#service-status");
 const applyProfileButton = document.querySelector("#apply-profile-button");
 const applyGraphicsButton = document.querySelector("#apply-graphics-button");
 const playButton = document.querySelector("#play-button");
+const checkPcButton = document.querySelector("#check-pc-button");
 const profileSelect = document.querySelector("#profile-select");
-const actionButtons = [applyProfileButton, applyGraphicsButton, playButton];
+const actionButtons = [applyProfileButton, applyGraphicsButton, playButton, checkPcButton];
 const resultPanel = document.querySelector("#result-panel");
 const protocolFallback = document.querySelector("#protocol-fallback");
 const protocolLink = document.querySelector("#protocol-link");
 const unlockButton = document.querySelector("#unlock-button");
 const confirmDialog = document.querySelector("#confirm-dialog");
+const recentStorageKey = "cafelauncher-recent-actions";
+const terminalStates = new Set(["COMPLETED", "PARTIAL", "SKIPPED", "FAILED", "CANCELED", "EXPIRED", "INTERRUPTED"]);
 let csrfToken = "";
 let activeRequest = false;
 
@@ -32,6 +35,111 @@ function setPendingRequest(requestId) {
 function clearPendingRequest() {
   try { sessionStorage.removeItem("cafelauncher-action-request"); }
   catch { /* Nothing else is needed if browser storage is disabled. */ }
+}
+
+function loadRecentActions() {
+  try {
+    const entries = JSON.parse(sessionStorage.getItem(recentStorageKey) || "[]");
+    if (!Array.isArray(entries)) return [];
+    return entries.filter((entry) => entry &&
+      typeof entry.requestId === "string" && /^[A-Za-z0-9_-]{43}$/.test(entry.requestId) &&
+      Object.prototype.hasOwnProperty.call(actionLabels, entry.action) &&
+      typeof entry.state === "string" && terminalStates.has(entry.state) &&
+      typeof entry.profile === "string" && entry.profile.length <= 64 &&
+      typeof entry.executionOutcomeKnown === "boolean" &&
+      typeof entry.completedUtc === "string");
+  } catch {
+    return [];
+  }
+}
+
+function canRetryRecent(entry) {
+  if (entry.action === "detect-pc") return entry.state !== "INTERRUPTED";
+  if (entry.state === "EXPIRED") return true;
+  return entry.state === "SKIPPED" && entry.executionOutcomeKnown === true;
+}
+
+function renderRecentActions() {
+  const list = document.querySelector("#recent-list");
+  const empty = document.querySelector("#recent-empty");
+  list.replaceChildren();
+  const entries = loadRecentActions().slice(0, 6);
+  empty.hidden = entries.length > 0;
+  for (const entry of entries) {
+    const item = document.createElement("li");
+    item.className = "recent-entry";
+    const main = document.createElement("div");
+    main.className = "recent-entry-main";
+    const title = document.createElement("strong");
+    title.className = "recent-entry-title";
+    title.textContent = `${actionLabels[entry.action]}${entry.profile ? ` · ${entry.profile}` : ""}`;
+    const meta = document.createElement("span");
+    meta.className = "recent-entry-meta";
+    const date = new Date(entry.completedUtc);
+    meta.textContent = `${entry.state} · ${Number.isNaN(date.getTime()) ? "Time unavailable" : date.toLocaleString()}`;
+    main.append(title, meta);
+    item.append(main);
+    if (canRetryRecent(entry)) {
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = "secondary-button";
+      retry.textContent = "Retry";
+      retry.addEventListener("click", () => startAction(entry.action, entry.profile || null));
+      item.append(retry);
+    }
+    list.append(item);
+  }
+}
+
+function recordRecentAction(state) {
+  if (!terminalStates.has(state.state) || !Object.prototype.hasOwnProperty.call(actionLabels, state.action)) return;
+  const entries = loadRecentActions().filter((entry) => entry.requestId !== state.requestId);
+  entries.unshift({
+    requestId: state.requestId,
+    action: state.action,
+    profile: typeof state.profile === "string" ? state.profile : "",
+    state: state.state,
+    executionOutcomeKnown: state.result?.data?.executionOutcomeKnown === true,
+    completedUtc: new Date().toISOString(),
+  });
+  try { sessionStorage.setItem(recentStorageKey, JSON.stringify(entries.slice(0, 6))); }
+  catch { /* Action history is optional when browser storage is unavailable. */ }
+  renderRecentActions();
+}
+
+function setReadiness(id, value, kind = "unknown") {
+  const element = document.querySelector(`#${id}`);
+  element.textContent = value;
+  element.dataset.state = kind;
+}
+
+function updateReadinessFromPcCheck(state) {
+  const data = state.result?.data;
+  if (!data?.steam || !data?.cs2) {
+    setReadiness("readiness-runner", "No confirmed response", "error");
+    document.querySelector("#readiness-note").textContent = "The runner did not return PC details. Check the action result before relying on this readiness check.";
+    return;
+  }
+  const version = typeof state.runnerVersion === "string" && state.runnerVersion ? ` · v${state.runnerVersion}` : "";
+  setReadiness("readiness-runner", `Connected${version}`, "ready");
+  setReadiness("readiness-steam", data.steam.status === "DETECTED" ? "Detected" : "Not detected", data.steam.status === "DETECTED" ? "ready" : "warning");
+  setReadiness("readiness-session", data.steam.activeSessionPresent ? "Signed in" : "Not signed in", data.steam.activeSessionPresent ? "ready" : "warning");
+  setReadiness("readiness-cs2", data.cs2.status === "DETECTED" ? "One install found" : "No unique install", data.cs2.status === "DETECTED" ? "ready" : "warning");
+  document.querySelector("#readiness-note").textContent = "This read-only check does not apply settings. Each action runs its own required checks, and CafeLauncher checks for runner updates when it starts.";
+}
+
+function updateReadinessFromRunner(state) {
+  if (typeof state.runnerVersion !== "string" || !state.runnerVersion) return;
+  setReadiness("readiness-runner", `Connected · v${state.runnerVersion}`, "ready");
+}
+
+function updateReadinessFromProfileApply(state) {
+  const dpi = state.result?.steps?.find((step) => step.name === "Logitech live DPI");
+  if (!dpi) return;
+  if (dpi.status === "SUCCESS") setReadiness("readiness-logitech", "Applied and verified", "ready");
+  else if (dpi.status === "SKIPPED") setReadiness("readiness-logitech", "Skipped · see action result", "warning");
+  else if (["FAILED", "PARTIAL"].includes(dpi.status)) setReadiness("readiness-logitech", "Needs attention · see action result", "error");
+  else setReadiness("readiness-logitech", `${dpi.status} · see action result`, "warning");
 }
 
 async function readJson(response) {
@@ -95,9 +203,11 @@ function newRequestId() {
 
 function setActionsDisabled(disabled) {
   for (const button of actionButtons) button.disabled = disabled;
+  for (const button of document.querySelectorAll("#recent-list button")) button.disabled = disabled;
 }
 
 const actionLabels = {
+  "detect-pc": "Check this PC",
   "apply-profile": "Apply profile",
   "apply-graphics": "Apply game graphics",
   "play-exec": "Play + Exec",
@@ -195,8 +305,12 @@ async function watchRequest(requestId) {
       delay = Math.min(3000, delay + 400);
       continue;
     }
+    updateReadinessFromRunner(state);
     renderResult(state);
     if (["COMPLETED", "PARTIAL", "SKIPPED", "FAILED", "CANCELED", "EXPIRED", "INTERRUPTED"].includes(state.state)) {
+      if (state.action === "detect-pc") updateReadinessFromPcCheck(state);
+      if (state.action === "apply-profile") updateReadinessFromProfileApply(state);
+      recordRecentAction(state);
       if (state.state === "INTERRUPTED" || state.result?.data?.executionOutcomeKnown === false) {
         setServiceStatus("The action may have changed this PC without a confirmed result. Check it before allowing another action.", "error");
         unlockButton.hidden = false;
@@ -293,4 +407,11 @@ async function startAction(action, profile = null) {
 applyProfileButton.addEventListener("click", () => startAction("apply-profile", profileSelect.value));
 applyGraphicsButton.addEventListener("click", () => startAction("apply-graphics", profileSelect.value));
 playButton.addEventListener("click", () => startAction("play-exec", profileSelect.value));
+checkPcButton.addEventListener("click", () => startAction("detect-pc"));
+document.querySelector("#clear-recent-button").addEventListener("click", () => {
+  try { sessionStorage.removeItem(recentStorageKey); }
+  catch { /* The visible history can still be cleared for this page. */ }
+  renderRecentActions();
+});
+renderRecentActions();
 initialize();

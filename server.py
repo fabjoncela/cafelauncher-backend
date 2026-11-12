@@ -440,6 +440,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                 "requestId": request_id,
                 "action": request_row["action"],
                 "profile": request_row["profile_name"],
+                "runnerVersion": request_row["runner_version"],
                 "state": state,
                 "createdUtc": request_row["created_utc"],
                 "expiresUtc": datetime.fromtimestamp(float(request_row["expires_at"]), timezone.utc).isoformat().replace("+00:00", "Z"),

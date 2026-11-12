@@ -32,6 +32,24 @@ main { display: grid; gap: 14px; padding-bottom: 56px; }
 .status-line { min-height: 22px; }
 .action-panel { display: flex; align-items: center; justify-content: space-between; gap: 22px; }
 .profile-panel { display: flex; align-items: center; gap: 14px; }
+.readiness-heading-row, .recent-heading-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.readiness-heading-row p:last-child, .recent-heading-row p:last-child { margin-bottom: 0; }
+.readiness-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap: 10px; margin: 16px 0 0; }
+.readiness-grid > div { min-width: 0; padding: 11px 12px; border: 1px solid var(--border); border-radius: 8px; background: #101925; }
+.readiness-grid dt { color: var(--muted); font-size: 12px; }
+.readiness-grid dd { margin: 3px 0 0; font-weight: 700; overflow-wrap: anywhere; }
+.readiness-grid dd[data-state="ready"] { color: var(--green); }
+.readiness-grid dd[data-state="warning"] { color: var(--amber); }
+.readiness-grid dd[data-state="error"] { color: var(--red); }
+.readiness-note, .recent-note, .recent-empty { margin: 12px 0 0; color: var(--muted); font-size: 13px; }
+.recent-heading-row { align-items: center; }
+.recent-list { display: grid; gap: 9px; margin: 14px 0 0; padding: 0; list-style: none; }
+.recent-entry { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 11px 12px; border: 1px solid var(--border); border-radius: 8px; background: #101925; }
+.recent-entry-main { min-width: 0; }
+.recent-entry-title { display: block; overflow-wrap: anywhere; }
+.recent-entry-meta { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; }
+.recent-entry button { flex: 0 0 auto; }
+.recent-list:empty { display: none; }
 .install-panel { display: flex; align-items: center; justify-content: space-between; gap: 22px; border-color: #365774; }
 .install-panel p:last-child { margin-bottom: 0; }
 .install-reset-note { font-size: 13px; }
@@ -59,4 +77,4 @@ select { min-width: 150px; border: 1px solid var(--border); border-radius: 7px; 
 .confirm-dialog p { color: var(--muted); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; }
 .secondary-button { border-color: var(--border); background: var(--raised); }
-@media (max-width: 640px) { .site-header { padding-top: 25px; } .action-panel, .install-panel { align-items: stretch; flex-direction: column; } .profile-panel { align-items: stretch; flex-direction: column; } .install-button { align-self: flex-start; } }
+@media (max-width: 640px) { .site-header { padding-top: 25px; } .action-panel, .install-panel, .readiness-heading-row, .recent-entry { align-items: stretch; flex-direction: column; } .profile-panel { align-items: stretch; flex-direction: column; } .install-button { align-self: flex-start; } .recent-entry button { align-self: flex-start; } }
