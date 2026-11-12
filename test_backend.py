@@ -512,6 +512,7 @@ class ApiTests(unittest.TestCase):
         self.assertIn(b'class="unlock-recovery-button"', home)
         self.assertLess(home.index(b'id="unlock-button"'), home.index(b"<main>"))
         self.assertNotIn(b'id="unlock-button"', home[home.index(b'id="result-panel"'):])
+        self.assertIn(b"position: fixed", self.request("/app.css")[2])
         self.assertIn(b"Runner update required", self.request("/app.js")[2])
         self.assertIn(b"1. Apply profile", home)
         self.assertIn(b"2. Apply game graphics", home)
