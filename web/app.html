@@ -39,25 +39,6 @@
       <select id="profile-select" disabled><option value="">Loading profiles…</option></select>
     </section>
 
-    <section class="panel readiness-panel" aria-labelledby="readiness-heading">
-      <div class="readiness-heading-row">
-        <div>
-          <p class="eyebrow">OPTIONAL PC CHECK</p>
-          <h2 id="readiness-heading">This PC readiness</h2>
-          <p>Check this PC for issues. You do not need to run this before an action.</p>
-        </div>
-        <button id="check-pc-button" type="button" disabled>Check this PC</button>
-      </div>
-      <dl class="readiness-grid" aria-live="polite">
-        <div><dt>CafeLauncher</dt><dd id="readiness-runner" data-state="unknown">Not checked</dd></div>
-        <div><dt>Steam</dt><dd id="readiness-steam" data-state="unknown">Not checked</dd></div>
-        <div><dt>Steam session</dt><dd id="readiness-session" data-state="unknown">Not checked</dd></div>
-        <div><dt>CS2 install</dt><dd id="readiness-cs2" data-state="unknown">Not checked</dd></div>
-        <div><dt>Logitech live DPI</dt><dd id="readiness-logitech" data-state="unknown">Checked during Apply profile</dd></div>
-      </dl>
-      <p id="readiness-note" class="readiness-note">The check only reads local status. It does not apply settings or save PC paths.</p>
-    </section>
-
     <section class="panel action-panel" aria-labelledby="apply-heading">
       <div>
         <p class="eyebrow">PROFILE ACTION</p>
@@ -111,6 +92,27 @@
       <ol id="recent-list" class="recent-list" aria-live="polite"></ol>
       <p class="recent-note">Recent action summaries stay in this browser tab. They do not include local PC paths or device details.</p>
     </section>
+
+    <details id="readiness-panel" class="panel readiness-panel">
+      <summary class="readiness-summary">
+        <span class="readiness-summary-title"><span class="eyebrow">OPTIONAL PC CHECK</span><strong id="readiness-heading">Check this PC</strong></span>
+        <span id="readiness-overall" class="readiness-overall" data-state="unknown">Not checked</span>
+      </summary>
+      <div class="readiness-content">
+        <div class="readiness-heading-row">
+          <p>Read-only check for Steam and CS2. You do not need to run this before an action.</p>
+          <button id="check-pc-button" type="button" disabled>Check this PC</button>
+        </div>
+        <dl class="readiness-grid" aria-live="polite">
+          <div><dt>CafeLauncher</dt><dd id="readiness-runner" data-state="unknown">Not checked</dd></div>
+          <div><dt>Steam</dt><dd id="readiness-steam" data-state="unknown">Not checked</dd></div>
+          <div><dt>Steam session</dt><dd id="readiness-session" data-state="unknown">Not checked</dd></div>
+          <div><dt>CS2 install</dt><dd id="readiness-cs2" data-state="unknown">Not checked</dd></div>
+          <div><dt>Logitech live DPI</dt><dd id="readiness-logitech" data-state="unknown">Checked during Apply profile</dd></div>
+        </dl>
+        <p id="readiness-note" class="readiness-note">The check only reads local status. It does not apply settings or save PC paths.</p>
+      </div>
+    </details>
   </main>
 
   <dialog id="confirm-dialog" class="confirm-dialog">

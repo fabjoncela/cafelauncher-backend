@@ -34,6 +34,19 @@ main { display: grid; gap: 14px; padding-bottom: 56px; }
 .profile-panel { display: flex; align-items: center; gap: 14px; }
 .readiness-heading-row, .recent-heading-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .readiness-heading-row p:last-child, .recent-heading-row p:last-child { margin-bottom: 0; }
+.readiness-panel { padding: 14px 18px; }
+.readiness-summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; cursor: pointer; list-style: none; }
+.readiness-summary::-webkit-details-marker { display: none; }
+.readiness-summary::after { content: "+"; color: var(--muted); font-size: 20px; line-height: 1; }
+.readiness-panel[open] .readiness-summary::after { content: "−"; }
+.readiness-summary-title { display: grid; gap: 2px; }
+.readiness-summary-title .eyebrow { margin: 0; }
+.readiness-summary-title strong { font-size: 15px; }
+.readiness-overall { margin-left: auto; color: var(--muted); font-size: 13px; }
+.readiness-overall[data-state="ready"] { color: var(--green); }
+.readiness-overall[data-state="warning"] { color: var(--amber); }
+.readiness-overall[data-state="error"] { color: var(--red); }
+.readiness-content { padding-top: 16px; }
 .readiness-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap: 10px; margin: 16px 0 0; }
 .readiness-grid > div { min-width: 0; padding: 11px 12px; border: 1px solid var(--border); border-radius: 8px; background: #101925; }
 .readiness-grid dt { color: var(--muted); font-size: 12px; }
@@ -77,4 +90,4 @@ select { min-width: 150px; border: 1px solid var(--border); border-radius: 7px; 
 .confirm-dialog p { color: var(--muted); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; }
 .secondary-button { border-color: var(--border); background: var(--raised); }
-@media (max-width: 640px) { .site-header { padding-top: 25px; } .action-panel, .install-panel, .readiness-heading-row, .recent-entry { align-items: stretch; flex-direction: column; } .profile-panel { align-items: stretch; flex-direction: column; } .install-button { align-self: flex-start; } .recent-entry button { align-self: flex-start; } }
+@media (max-width: 640px) { .site-header { padding-top: 25px; } .action-panel, .install-panel, .readiness-heading-row, .recent-entry { align-items: stretch; flex-direction: column; } .readiness-summary { flex-wrap: wrap; } .readiness-overall { margin-left: 0; } .profile-panel { align-items: stretch; flex-direction: column; } .install-button { align-self: flex-start; } .recent-entry button { align-self: flex-start; } }

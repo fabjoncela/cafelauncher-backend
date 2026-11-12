@@ -113,10 +113,15 @@ function setReadiness(id, value, kind = "unknown") {
   element.dataset.state = kind;
 }
 
+function setReadinessOverall(value, kind = "unknown") {
+  setReadiness("readiness-overall", value, kind);
+}
+
 function updateReadinessFromPcCheck(state) {
   const data = state.result?.data;
   if (!data?.steam || !data?.cs2) {
     setReadiness("readiness-runner", "No confirmed response", "error");
+    setReadinessOverall("Could not check", "error");
     document.querySelector("#readiness-note").textContent = "The runner did not return PC details. Check the action result before relying on this readiness check.";
     return;
   }
@@ -125,12 +130,17 @@ function updateReadinessFromPcCheck(state) {
   setReadiness("readiness-steam", data.steam.status === "DETECTED" ? "Detected" : "Not detected", data.steam.status === "DETECTED" ? "ready" : "warning");
   setReadiness("readiness-session", data.steam.activeSessionPresent ? "Signed in" : "Not signed in", data.steam.activeSessionPresent ? "ready" : "warning");
   setReadiness("readiness-cs2", data.cs2.status === "DETECTED" ? "One install found" : "No unique install", data.cs2.status === "DETECTED" ? "ready" : "warning");
+  const isReady = data.steam.status === "DETECTED" && data.steam.activeSessionPresent && data.cs2.status === "DETECTED";
+  setReadinessOverall(isReady ? "Checks passed" : "Needs attention", isReady ? "ready" : "warning");
   document.querySelector("#readiness-note").textContent = "This read-only check does not apply settings. Each action runs its own required checks, and CafeLauncher checks for runner updates when it starts.";
 }
 
 function updateReadinessFromRunner(state) {
   if (typeof state.runnerVersion !== "string" || !state.runnerVersion) return;
   setReadiness("readiness-runner", `Connected · v${state.runnerVersion}`, "ready");
+  if (document.querySelector("#readiness-overall").dataset.state === "unknown") {
+    setReadinessOverall("Runner connected", "ready");
+  }
 }
 
 function updateReadinessFromProfileApply(state) {
