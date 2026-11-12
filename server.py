@@ -15,6 +15,7 @@ import sqlite3
 import tempfile
 import threading
 import time
+import uuid
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from http.cookies import CookieError, SimpleCookie
@@ -26,6 +27,7 @@ from validation import PROFILE_CFG_FILES, normalize_graphics, normalize_profile,
 
 
 APP_VERSION = "0.1.0"
+MIN_WEB_ACTION_RUNNER_VERSION = "0.6.0"
 MAX_SYNC_BYTES = 4 * 1024 * 1024
 MAX_CFG_BYTES = 2 * 1024 * 1024
 MIN_LAUNCHER_BYTES = 10_000
@@ -450,6 +452,12 @@ class ApiHandler(BaseHTTPRequestHandler):
             self._error(503, "action_state_unavailable", "The action result could not be read.")
             return
         state = request_row["state"]
+        runner_update_required = any(
+            isinstance(event, dict)
+            and isinstance(event.get("step"), dict)
+            and event["step"].get("name") == "Runner update"
+            for event in events
+        )
         if state == "REQUESTED" and float(request_row["expires_at"]) <= time.time():
             state = "EXPIRED"
         elif state in {"CLAIMED", "RUNNING", "AWAITING_LOCAL_INPUT"} and float(request_row["upload_expires_at"] or 0) <= time.time():
@@ -461,6 +469,8 @@ class ApiHandler(BaseHTTPRequestHandler):
                 "action": request_row["action"],
                 "profile": request_row["profile_name"],
                 "runnerVersion": request_row["runner_version"],
+                "minimumRunnerVersion": MIN_WEB_ACTION_RUNNER_VERSION,
+                "runnerUpdateRequired": runner_update_required,
                 "state": state,
                 "cancelRequested": bool(request_row["cancel_requested"]),
                 "cancelRequestedUtc": request_row["cancel_requested_utc"],
@@ -649,6 +659,23 @@ class ApiHandler(BaseHTTPRequestHandler):
                     connection.commit()
                     self._error(410, "action_expired", "This action request expired. Return to the page and retry.")
                     return
+                if not self._runner_version_is_current(runner_version):
+                    detail = (
+                        f"Installed runner v{runner_version} is too old; v{MIN_WEB_ACTION_RUNNER_VERSION} or newer is required. "
+                        "Use Download CafeLauncher and open the downloaded file once to update this PC, then retry."
+                    )
+                    step = {"name": "Runner update", "status": "FAILED", "detail": detail}
+                    result = self._runner_update_required_result(row["action"], row["profile_name"], runner_version)
+                    events = [{"eventId": str(uuid.uuid4()), "state": "FAILED", "createdUtc": _utc_now(), "step": step}]
+                    connection.execute(
+                        "UPDATE action_requests SET state = 'FAILED', runner_version = ?, events_json = ?, result_json = ?, "
+                        "upload_expires_at = ? WHERE request_hash = ? AND state = 'REQUESTED'",
+                        (runner_version, _json_bytes(events).decode("utf-8"), _json_bytes(result).decode("utf-8"), now + ACTION_RESULT_TTL_SECONDS, request_hash),
+                    )
+                    row = connection.execute("SELECT * FROM action_requests WHERE request_hash = ?", (request_hash,)).fetchone()
+                    connection.commit()
+                    self._send_action_state(row, request_id)
+                    return
                 upload_expires = now + ACTION_RESULT_TTL_SECONDS
                 connection.execute(
                     "UPDATE action_requests SET state = 'CLAIMED', claim_capability_hash = ?, runner_version = ?, "
@@ -680,6 +707,43 @@ class ApiHandler(BaseHTTPRequestHandler):
                 "uploadExpiresUtc": datetime.fromtimestamp(float(row["upload_expires_at"]), timezone.utc).isoformat().replace("+00:00", "Z"),
             },
         )
+
+    @staticmethod
+    def _runner_version_is_current(version: str) -> bool:
+        if re.fullmatch(r"\d+\.\d+\.\d+", version) is None:
+            return False
+        return tuple(int(part) for part in version.split(".")) >= tuple(
+            int(part) for part in MIN_WEB_ACTION_RUNNER_VERSION.split(".")
+        )
+
+    @staticmethod
+    def _runner_update_required_result(action: str, profile: str | None, version: str) -> dict[str, object]:
+        summary = (
+            f"This PC's CafeLauncher runner (v{version}) needs an update before it can run this action. "
+            f"Download and open the latest CafeLauncher runner (v{MIN_WEB_ACTION_RUNNER_VERSION}), then retry."
+        )
+        step = {
+            "name": "Runner update",
+            "status": "FAILED",
+            "detail": f"v{version} is older than the required v{MIN_WEB_ACTION_RUNNER_VERSION}.",
+        }
+        if action == "play-exec":
+            cfg_name = PROFILE_CFG_FILES[profile]
+            data: dict[str, object] = {
+                "steamLaunchRequested": False,
+                "cs2AlreadyRunning": False,
+                "executionOutcomeKnown": True,
+                "cfgName": cfg_name,
+                "consoleCommands": [],
+            }
+        elif action in {"apply-profile", "apply-graphics"}:
+            data = {"executionOutcomeKnown": True}
+        else:
+            data = {
+                "steam": {"status": "NOT_DETECTED", "executable": None, "libraries": [], "activeSessionPresent": False},
+                "cs2": {"status": "NOT_UNIQUELY_DETECTED", "installPath": None, "configPath": None},
+            }
+        return {"summary": summary, "steps": [step], "data": data}
 
     def _cancel_action_request(self, request_id: str) -> None:
         if not self._check_action_origin():
