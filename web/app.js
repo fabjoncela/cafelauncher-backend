@@ -70,8 +70,10 @@ function formatCs2Resolution(graphics) {
   const settings = graphics?.Settings || {};
   const { Width: width, Height: height, RefreshHz: refreshHz } = settings;
   if (![width, height].every((value) => Number.isInteger(value) && value > 0)) return "Unavailable";
-  if (Number.isInteger(refreshHz) && refreshHz > 0) return `${width}x${height} @${refreshHz} Hz`;
   if (graphics?.RefreshPolicy === "Highest") return `${width}x${height} @ highest refresh`;
+  if (graphics?.RefreshPolicy === "Exact" && Number.isInteger(refreshHz) && refreshHz > 0) {
+    return `${width}x${height} @${refreshHz} Hz`;
+  }
   return "Unavailable";
 }
 

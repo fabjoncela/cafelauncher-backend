@@ -527,6 +527,7 @@ class ApiTests(unittest.TestCase):
         self.assertIn(b'id="profile-cs2-display"', home)
         self.assertIn(b"formatCs2Resolution", app_js)
         self.assertIn(b'graphics?.RefreshPolicy === "Highest"', app_js)
+        self.assertIn(b'graphics?.RefreshPolicy === "Exact"', app_js)
         self.assertNotIn(b"Detect this PC", home)
         self.assertNotIn(b"Capture CS2", home)
         self.assertNotIn(b"Edit Profile", home)
