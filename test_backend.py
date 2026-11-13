@@ -607,6 +607,8 @@ class ApiTests(unittest.TestCase):
                     self.assertIn(b"formatElapsedMs", body)
                     self.assertIn(b"updateLiveActionTimer", body)
                     self.assertIn(b"Current stage:", body)
+                    self.assertIn(b"Last stage:", body)
+                    self.assertIn(b"Waiting for the runner result", body)
                 if path == "/status.js":
                     self.assertIn(b"copyDiagnostics", body)
 

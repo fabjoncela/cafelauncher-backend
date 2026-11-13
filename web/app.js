@@ -350,8 +350,17 @@ function updateLiveActionTimer(state) {
     displayedProgressEventId = eventId;
     displayedProgressStartedAt = performance.now();
   }
+  const status = currentEvent.step.status || "RUNNING";
+  const name = currentEvent.step.name || "CafeLauncher action";
+  if (status !== "RUNNING") {
+    currentStepTiming.textContent = status === "PENDING"
+      ? `Waiting for input: ${name} · PENDING`
+      : `Last stage: ${name} · ${status} · Waiting for the runner result…`;
+    currentStepTiming.hidden = false;
+    return;
+  }
   const elapsed = formatElapsedMs(performance.now() - displayedProgressStartedAt);
-  currentStepTiming.textContent = `Current stage: ${currentEvent.step.name || "CafeLauncher action"} · ${currentEvent.step.status || "RUNNING"} · ${elapsed}`;
+  currentStepTiming.textContent = `Current stage: ${name} · RUNNING · ${elapsed}`;
   currentStepTiming.hidden = false;
 }
 
