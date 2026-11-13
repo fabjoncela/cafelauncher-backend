@@ -11,6 +11,7 @@ const profilePointer = document.querySelector("#profile-pointer");
 const profileCfg = document.querySelector("#profile-cfg");
 const profileDisplay = document.querySelector("#profile-display");
 const profileCfgFiles = new Map();
+const pointerSpeedLevels = [1, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20];
 const actionButtons = [applyProfileButton, applyGraphicsButton, playButton, checkPcButton];
 const resultPanel = document.querySelector("#result-panel");
 const protocolFallback = document.querySelector("#protocol-fallback");
@@ -47,6 +48,23 @@ function setServiceStatus(message, kind = "") {
   serviceStatus.dataset.kind = kind;
 }
 
+function formatPointerSpeedLevel(value) {
+  if (!Number.isInteger(value)) return "Unavailable";
+  let index = pointerSpeedLevels.indexOf(value);
+  if (index < 0) {
+    index = 0;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    for (let candidate = 0; candidate < pointerSpeedLevels.length; candidate += 1) {
+      const distance = Math.abs(pointerSpeedLevels[candidate] - value);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        index = candidate;
+      }
+    }
+  }
+  return `${index + 1}/11`;
+}
+
 async function refreshSelectedProfileSummary() {
   const profileName = profileSelect.value;
   const requestNumber = ++profileSummaryRequest;
@@ -62,7 +80,7 @@ async function refreshSelectedProfileSummary() {
     }));
     if (requestNumber !== profileSummaryRequest || profileSelect.value !== profileName) return;
     profileDpi.textContent = Number.isInteger(profile.LogitechDPI) ? String(profile.LogitechDPI) : "Unavailable";
-    profilePointer.textContent = Number.isInteger(profile.PointerSpeed) ? String(profile.PointerSpeed) : "Unavailable";
+    profilePointer.textContent = formatPointerSpeedLevel(profile.PointerSpeed);
     const { Width: width, Height: height, RefreshHz: refreshHz } = profile;
     profileDisplay.textContent = [width, height, refreshHz].every(Number.isInteger)
       ? `${width}x${height} @${refreshHz} Hz`
