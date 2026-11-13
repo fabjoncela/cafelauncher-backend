@@ -10,6 +10,7 @@ const profileDpi = document.querySelector("#profile-dpi");
 const profilePointer = document.querySelector("#profile-pointer");
 const profileCfg = document.querySelector("#profile-cfg");
 const profileDisplay = document.querySelector("#profile-display");
+const profileCs2Display = document.querySelector("#profile-cs2-display");
 const profileCfgFiles = new Map();
 const pointerSpeedLevels = [1, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20];
 const actionButtons = [applyProfileButton, applyGraphicsButton, playButton, checkPcButton];
@@ -73,23 +74,30 @@ async function refreshSelectedProfileSummary() {
   profilePointer.textContent = "Loading…";
   profileCfg.textContent = profileCfgFiles.get(profileName) || "Unavailable";
   profileDisplay.textContent = "Loading…";
+  profileCs2Display.textContent = "Loading…";
   try {
-    const profile = await readJson(await fetch(`/v1/profiles/${encodeURIComponent(profileName)}`, {
+    const bundle = await readJson(await fetch(`/v1/profiles/${encodeURIComponent(profileName)}/bundle`, {
       cache: "no-store",
       headers: { Accept: "application/json" },
     }));
     if (requestNumber !== profileSummaryRequest || profileSelect.value !== profileName) return;
+    const profile = bundle.profile;
     profileDpi.textContent = Number.isInteger(profile.LogitechDPI) ? String(profile.LogitechDPI) : "Unavailable";
     profilePointer.textContent = formatPointerSpeedLevel(profile.PointerSpeed);
     const { Width: width, Height: height, RefreshHz: refreshHz } = profile;
     profileDisplay.textContent = [width, height, refreshHz].every(Number.isInteger)
       ? `${width}x${height} @${refreshHz} Hz`
       : "Unavailable";
+    const { Width: cs2Width, Height: cs2Height, RefreshHz: cs2RefreshHz } = bundle.graphics?.Settings || {};
+    profileCs2Display.textContent = [cs2Width, cs2Height, cs2RefreshHz].every(Number.isInteger)
+      ? `${cs2Width}x${cs2Height} @${cs2RefreshHz} Hz`
+      : "Unavailable";
   } catch {
     if (requestNumber !== profileSummaryRequest || profileSelect.value !== profileName) return;
     profileDpi.textContent = "Unavailable";
     profilePointer.textContent = "Unavailable";
     profileDisplay.textContent = "Unavailable";
+    profileCs2Display.textContent = "Unavailable";
   }
 }
 
