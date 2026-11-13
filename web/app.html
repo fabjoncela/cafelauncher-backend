@@ -43,6 +43,11 @@
     <section class="panel profile-panel">
       <label for="profile-select">Profile</label>
       <select id="profile-select" disabled><option value="">Loading profiles…</option></select>
+      <div id="profile-summary" class="profile-summary" role="status" aria-live="polite">
+        <p class="profile-summary-top"><span>DPI: <strong id="profile-dpi">—</strong></span><span>Pointer: <strong id="profile-pointer">—</strong></span></p>
+        <p>CFG: <strong id="profile-cfg">—</strong></p>
+        <p>Display: <strong id="profile-display">—</strong></p>
+      </div>
     </section>
 
     <section class="panel action-panel" aria-labelledby="apply-heading">

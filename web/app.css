@@ -40,7 +40,7 @@ main { display: grid; gap: 14px; padding-bottom: 56px; }
 .intro-panel p:last-child { margin-bottom: 0; }
 .status-line { min-height: 22px; }
 .action-panel { display: flex; align-items: center; justify-content: space-between; gap: 22px; }
-.profile-panel { display: flex; align-items: center; gap: 14px; }
+.profile-panel { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .readiness-heading-row, .recent-heading-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .readiness-heading-row p:last-child, .recent-heading-row p:last-child { margin-bottom: 0; }
 .readiness-panel { padding: 14px 18px; }
@@ -81,6 +81,11 @@ main { display: grid; gap: 14px; padding-bottom: 56px; }
 .profile-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
 label { font-weight: 650; }
 select { min-width: 150px; border: 1px solid var(--border); border-radius: 7px; background: var(--raised); color: var(--text); padding: 10px; }
+.profile-summary { flex: 1 1 300px; min-width: 0; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; background: #101925; }
+.profile-summary p { margin: 0; color: var(--text); font-size: 14px; line-height: 1.4; }
+.profile-summary p + p { margin-top: 2px; }
+.profile-summary-top { display: flex; flex-wrap: wrap; gap: 4px 18px; }
+.profile-summary strong { font-weight: 650; }
 .result-heading-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 15px; }
 .result-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .cancel-note { margin: -4px 0 0; color: var(--amber) !important; font-size: 13px; }

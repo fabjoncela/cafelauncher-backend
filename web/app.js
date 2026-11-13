@@ -6,6 +6,11 @@ const applyGraphicsButton = document.querySelector("#apply-graphics-button");
 const playButton = document.querySelector("#play-button");
 const checkPcButton = document.querySelector("#check-pc-button");
 const profileSelect = document.querySelector("#profile-select");
+const profileDpi = document.querySelector("#profile-dpi");
+const profilePointer = document.querySelector("#profile-pointer");
+const profileCfg = document.querySelector("#profile-cfg");
+const profileDisplay = document.querySelector("#profile-display");
+const profileCfgFiles = new Map();
 const actionButtons = [applyProfileButton, applyGraphicsButton, playButton, checkPcButton];
 const resultPanel = document.querySelector("#result-panel");
 const protocolFallback = document.querySelector("#protocol-fallback");
@@ -25,6 +30,7 @@ let activeRequest = false;
 let latestActionState = null;
 let displayedProgressEventId = "";
 let displayedProgressStartedAt = 0;
+let profileSummaryRequest = 0;
 
 const siteUpdatedTime = document.querySelector("#site-updated");
 if (siteUpdatedTime?.dateTime) {
@@ -39,6 +45,34 @@ if (siteUpdatedTime?.dateTime) {
 function setServiceStatus(message, kind = "") {
   serviceStatus.textContent = message;
   serviceStatus.dataset.kind = kind;
+}
+
+async function refreshSelectedProfileSummary() {
+  const profileName = profileSelect.value;
+  const requestNumber = ++profileSummaryRequest;
+  if (!profileName) return;
+  profileDpi.textContent = "Loading…";
+  profilePointer.textContent = "Loading…";
+  profileCfg.textContent = profileCfgFiles.get(profileName) || "Unavailable";
+  profileDisplay.textContent = "Loading…";
+  try {
+    const profile = await readJson(await fetch(`/v1/profiles/${encodeURIComponent(profileName)}`, {
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    }));
+    if (requestNumber !== profileSummaryRequest || profileSelect.value !== profileName) return;
+    profileDpi.textContent = Number.isInteger(profile.LogitechDPI) ? String(profile.LogitechDPI) : "Unavailable";
+    profilePointer.textContent = Number.isInteger(profile.PointerSpeed) ? String(profile.PointerSpeed) : "Unavailable";
+    const { Width: width, Height: height, RefreshHz: refreshHz } = profile;
+    profileDisplay.textContent = [width, height, refreshHz].every(Number.isInteger)
+      ? `${width}x${height} @${refreshHz} Hz`
+      : "Unavailable";
+  } catch {
+    if (requestNumber !== profileSummaryRequest || profileSelect.value !== profileName) return;
+    profileDpi.textContent = "Unavailable";
+    profilePointer.textContent = "Unavailable";
+    profileDisplay.textContent = "Unavailable";
+  }
 }
 
 function setUnlockButtonVisible(visible) {
@@ -208,9 +242,11 @@ async function initialize() {
       option.value = profile.name;
       option.textContent = profile.name;
       profileSelect.append(option);
+      if (typeof profile.name === "string" && typeof profile.cfg === "string") profileCfgFiles.set(profile.name, profile.cfg);
     }
     if (!profileSelect.options.length) throw new Error("No CafeLauncher profiles are available.");
     profileSelect.disabled = false;
+    await refreshSelectedProfileSummary();
     setActionsDisabled(false);
     setServiceStatus("Ready on this PC. Select an action to continue.", "ready");
     const pendingRequest = getPendingRequest();
@@ -267,6 +303,7 @@ function confirmAction(action, profile) {
 
 document.querySelector("#confirm-cancel").addEventListener("click", () => confirmDialog.close("cancel"));
 document.querySelector("#confirm-accept").addEventListener("click", () => confirmDialog.close("confirm"));
+profileSelect.addEventListener("change", refreshSelectedProfileSummary);
 
 function renderResult(state) {
   latestActionState = state;
