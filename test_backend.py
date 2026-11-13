@@ -524,6 +524,7 @@ class ApiTests(unittest.TestCase):
         self.assertIn(b"1. Apply profile", home)
         self.assertIn(b"2. Apply game graphics", home)
         self.assertIn(b"3. Play + Exec", home)
+        self.assertIn(b'id="profile-cs2-display"', home)
         self.assertNotIn(b"Detect this PC", home)
         self.assertNotIn(b"Capture CS2", home)
         self.assertNotIn(b"Edit Profile", home)
@@ -902,6 +903,23 @@ class ApiTests(unittest.TestCase):
         profile = json.loads(body)
         self.assertEqual(profile["CfgDownloadUrl"], "/v1/cfg/fab.cfg")
         self.assertEqual(headers["X-Profile-Revision"], "1")
+
+        status, headers, body = self.request("/v1/profiles/FabMode/bundle")
+        self.assertEqual(status, 200)
+        bundle = json.loads(body)
+        self.assertEqual(bundle["profile"], profile)
+        self.assertEqual(bundle["graphics"]["Settings"], graphics_payload()["Settings"])
+        self.assertEqual(bundle["cfg"], 'sensitivity "1.2"\n')
+        self.assertEqual(bundle["revision"], 1)
+        self.assertEqual(headers["X-Profile-Revision"], "1")
+        self.assertEqual(headers["ETag"], '"FabMode-1"')
+
+        status, not_modified_headers, _ = self.request(
+            "/v1/profiles/FabMode/bundle",
+            headers={"If-None-Match": headers["ETag"]},
+        )
+        self.assertEqual(status, 304)
+        self.assertEqual(not_modified_headers["X-Profile-Revision"], "1")
 
         status, headers, body = self.request("/v1/cfg/fab.cfg")
         self.assertEqual(status, 200)

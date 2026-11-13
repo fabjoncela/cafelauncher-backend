@@ -1336,6 +1336,39 @@ class ApiHandler(BaseHTTPRequestHandler):
             )
             return
 
+        if len(parts) == 4 and parts[:2] == ["v1", "profiles"] and parts[3] == "bundle":
+            profile_name = parts[2]
+            if not PROFILE_NAME.fullmatch(profile_name):
+                self._error(400, "invalid_profile_name", "Profile name is invalid.")
+                return
+            row = self._revision_row(profile_name)
+            if row is None:
+                self._error(404, "not_found", "Profile has not been published.")
+                return
+            etag = f'"{profile_name}-{row["revision"]}"'
+            headers = {"ETag": etag, "X-Profile-Revision": str(row["revision"])}
+            if self.headers.get("If-None-Match") == etag:
+                self._status = 304
+                self.send_response(304)
+                self.send_header("ETag", etag)
+                self.send_header("X-Profile-Revision", str(row["revision"]))
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                return
+            self._send_json(
+                200,
+                {
+                    "profile": json.loads(row["profile_json"]),
+                    "graphics": json.loads(row["graphics_json"]),
+                    "cfg": row["cfg_text"],
+                    "revision": row["revision"],
+                    "createdUtc": row["created_utc"],
+                },
+                cache_control="no-cache",
+                headers=headers,
+            )
+            return
+
         if len(parts) == 5 and parts[:2] == ["v1", "profiles"] and parts[3] == "history":
             profile_name = parts[2]
             if not PROFILE_NAME.fullmatch(profile_name):

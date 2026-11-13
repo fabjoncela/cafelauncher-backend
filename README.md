@@ -53,6 +53,7 @@ The status dashboard is at `/status` (also available at `/stats`) and links back
 | `GET /v1/health` | Service status and application version; returns `503` if SQLite storage is unavailable. |
 | `GET /v1/viewer-schema` | Profile/CFG choices, viewer sections, field labels/groups, and enum labels used by `/viewer`. |
 | `GET /v1/profiles/{name}` | Latest profile JSON. |
+| `GET /v1/profiles/{name}/bundle` | Latest profile, graphics preset, and CFG from one saved revision; used by the home-page profile summary to show CS2 resolution without an extra request. |
 | `GET /v1/graphics/{name}` | Latest graphics preset JSON. |
 | `GET /v1/cfg/{filename}` | Latest CFG as UTF-8 text, such as `fab.cfg`. |
 | `GET /v1/graphics/{name}/history?limit=3` | Current distinct graphics snapshot plus up to three older graphics-only versions. |
