@@ -66,6 +66,15 @@ function formatPointerSpeedLevel(value) {
   return `${index + 1}/11`;
 }
 
+function formatCs2Resolution(graphics) {
+  const settings = graphics?.Settings || {};
+  const { Width: width, Height: height, RefreshHz: refreshHz } = settings;
+  if (![width, height].every((value) => Number.isInteger(value) && value > 0)) return "Unavailable";
+  if (Number.isInteger(refreshHz) && refreshHz > 0) return `${width}x${height} @${refreshHz} Hz`;
+  if (graphics?.RefreshPolicy === "Highest") return `${width}x${height} @ highest refresh`;
+  return "Unavailable";
+}
+
 async function refreshSelectedProfileSummary() {
   const profileName = profileSelect.value;
   const requestNumber = ++profileSummaryRequest;
@@ -88,10 +97,7 @@ async function refreshSelectedProfileSummary() {
     profileDisplay.textContent = [width, height, refreshHz].every(Number.isInteger)
       ? `${width}x${height} @${refreshHz} Hz`
       : "Unavailable";
-    const { Width: cs2Width, Height: cs2Height, RefreshHz: cs2RefreshHz } = bundle.graphics?.Settings || {};
-    profileCs2Display.textContent = [cs2Width, cs2Height, cs2RefreshHz].every(Number.isInteger)
-      ? `${cs2Width}x${cs2Height} @${cs2RefreshHz} Hz`
-      : "Unavailable";
+    profileCs2Display.textContent = formatCs2Resolution(bundle.graphics);
   } catch {
     if (requestNumber !== profileSummaryRequest || profileSelect.value !== profileName) return;
     profileDpi.textContent = "Unavailable";
