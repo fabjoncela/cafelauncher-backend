@@ -254,7 +254,7 @@ function confirmAction(action, profile) {
   const label = actionLabels[action];
   document.querySelector("#confirm-title").textContent = `${label} · ${profile}`;
   const descriptions = {
-    "apply-profile": `CafeLauncher will apply the verified ${profile} profile to this Windows session. This can change mouse and NVIDIA settings, install the profile CFG, and set supported Logitech live DPI when the mouse is connected. The web action will not start FACEIT Anti-Cheat, Steam, or other profile apps.`,
+    "apply-profile": `CafeLauncher will apply the verified ${profile} profile to this Windows session. This can change mouse and NVIDIA settings, install the profile CFG, and set supported Logitech live DPI when the mouse is connected. It also honors the profile's LaunchApps setting: when enabled, CafeLauncher starts Steam and FACEIT Anti-Cheat, opens FACEIT matchmaking and the profile's configured website, and opens Mouse Pointer Options. G HUB stays closed so it cannot overwrite live DPI.`,
     "apply-graphics": `CafeLauncher will apply the verified ${profile} CS2 video settings and supported NVIDIA scaling. CS2 must be closed.`,
     "play-exec": `CafeLauncher will verify the current ${profile} profile and CFG, install the reset baseline and profile CFG, then ask Steam to start CS2.`,
   };
@@ -522,7 +522,9 @@ async function startAction(action, profile = null) {
   activeRequest = true;
   setActionsDisabled(true);
   profileSelect.disabled = true;
-  if (action !== "detect-pc") {
+  // Apply Profile is a one-click action, matching the local CafeLauncher dashboard.
+  // Its profile routine already applies settings and launches configured apps.
+  if (action !== "detect-pc" && action !== "apply-profile") {
     try {
       if (!(await confirmAction(action, profile))) {
         activeRequest = false;
