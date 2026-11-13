@@ -27,7 +27,7 @@ from validation import PROFILE_CFG_FILES, normalize_graphics, normalize_profile,
 
 
 APP_VERSION = "0.1.0"
-MIN_WEB_ACTION_RUNNER_VERSION = "0.7.0"
+MIN_WEB_ACTION_RUNNER_VERSION = "0.7.6"
 MAX_SYNC_BYTES = 4 * 1024 * 1024
 MAX_CFG_BYTES = 2 * 1024 * 1024
 MIN_LAUNCHER_BYTES = 10_000
@@ -194,6 +194,7 @@ def _initialize() -> None:
                 session_hash TEXT NOT NULL,
                 action TEXT NOT NULL,
                 profile_name TEXT,
+                profile_revision INTEGER,
                 state TEXT NOT NULL,
                 created_utc TEXT NOT NULL,
                 expires_at REAL NOT NULL,
@@ -222,6 +223,8 @@ def _initialize() -> None:
             connection.execute("ALTER TABLE action_requests ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0")
         if "cancel_requested_utc" not in action_request_columns:
             connection.execute("ALTER TABLE action_requests ADD COLUMN cancel_requested_utc TEXT")
+        if "profile_revision" not in action_request_columns:
+            connection.execute("ALTER TABLE action_requests ADD COLUMN profile_revision INTEGER")
         connection.execute(
             "INSERT OR IGNORE INTO github_mirror_state "
             "(singleton, generation, mirrored_generation, last_attempt_utc, last_success_utc, last_error) "
@@ -468,6 +471,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                 "requestId": request_id,
                 "action": request_row["action"],
                 "profile": request_row["profile_name"],
+                "profileRevision": request_row["profile_revision"],
                 "runnerVersion": request_row["runner_version"],
                 "minimumRunnerVersion": MIN_WEB_ACTION_RUNNER_VERSION,
                 "runnerUpdateRequired": runner_update_required,
@@ -541,12 +545,17 @@ class ApiHandler(BaseHTTPRequestHandler):
         payload = self._action_json_body(2048)
         if payload is None:
             return
-        if not isinstance(payload, dict) or set(payload) != {"action", "profile", "clientRequestId"}:
+        if not isinstance(payload, dict) or set(payload) not in (
+            {"action", "profile", "clientRequestId"},
+            {"action", "profile", "clientRequestId", "profileRevision"},
+        ):
             self._error(400, "invalid_action_request", "Action request contains missing or unsupported fields.")
             return
         action = payload["action"]
         profile_name = payload["profile"]
         client_id = payload["clientRequestId"]
+        has_revision_hint = "profileRevision" in payload
+        revision_hint = payload.get("profileRevision")
         if not isinstance(action, str) or action not in ACTION_PROFILES:
             self._error(422, "unsupported_action", "That web action is not available.")
             return
@@ -560,6 +569,13 @@ class ApiHandler(BaseHTTPRequestHandler):
                 return
         elif not isinstance(profile_name, str) or profile_name not in expected_profiles:
             self._error(422, "invalid_action_profile", "Choose a supported CafeLauncher profile.")
+            return
+        if expected_profiles is None:
+            if has_revision_hint and revision_hint is not None:
+                self._error(422, "invalid_profile_revision", "Detect PC does not use a profile revision.")
+                return
+        elif has_revision_hint and (isinstance(revision_hint, bool) or not isinstance(revision_hint, int) or revision_hint < 1):
+            self._error(422, "invalid_profile_revision", "Choose a profile with a valid published revision before running this action.")
             return
 
         request_hash = self._action_hash(client_id)
@@ -581,13 +597,30 @@ class ApiHandler(BaseHTTPRequestHandler):
                 "SELECT * FROM action_requests WHERE request_hash = ?", (request_hash,)
             ).fetchone()
             if row is not None:
-                if row["session_hash"] != session_hash:
+                if (row["session_hash"] != session_hash or row["action"] != action or
+                    row["profile_name"] != profile_name or
+                    (has_revision_hint and row["profile_revision"] != revision_hint)):
                     connection.rollback()
                     self._error(409, "request_id_conflict", "This action request identifier has already been used.")
                     return
                 connection.commit()
                 self._send_action_state(row, client_id)
                 return
+            profile_revision = None
+            if expected_profiles is not None:
+                current_revision = connection.execute(
+                    "SELECT revision FROM profile_revisions WHERE profile_name = ? ORDER BY revision DESC LIMIT 1",
+                    (profile_name,),
+                ).fetchone()
+                if current_revision is None:
+                    connection.rollback()
+                    self._error(409, "profile_unavailable", "This profile has not been published to the backend yet.")
+                    return
+                profile_revision = int(current_revision["revision"])
+                if has_revision_hint and revision_hint != profile_revision:
+                    connection.rollback()
+                    self._error(409, "profile_revision_changed", "This profile changed since the page loaded. Refreshing it before the action starts.")
+                    return
             outstanding = connection.execute(
                 "SELECT COUNT(*) FROM action_requests WHERE session_hash = ? "
                 "AND state IN ('REQUESTED', 'CLAIMED', 'RUNNING', 'AWAITING_LOCAL_INPUT') "
@@ -600,13 +633,14 @@ class ApiHandler(BaseHTTPRequestHandler):
                 return
             connection.execute(
                 "INSERT INTO action_requests "
-                "(request_hash, session_hash, action, profile_name, state, created_utc, expires_at, events_json) "
-                "VALUES (?, ?, ?, ?, 'REQUESTED', ?, ?, '[]')",
+                "(request_hash, session_hash, action, profile_name, profile_revision, state, created_utc, expires_at, events_json) "
+                "VALUES (?, ?, ?, ?, ?, 'REQUESTED', ?, ?, '[]')",
                 (
                     request_hash,
                     session_hash,
                     action,
                     profile_name,
+                    profile_revision,
                     created_utc,
                     now + ACTION_REQUEST_TTL_SECONDS,
                 ),
@@ -702,6 +736,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                 "requestId": request_id,
                 "action": row["action"],
                 "profile": row["profile_name"],
+                "profileRevision": row["profile_revision"],
                 "state": row["state"],
                 "requestExpiresUtc": datetime.fromtimestamp(float(row["expires_at"]), timezone.utc).isoformat().replace("+00:00", "Z"),
                 "uploadExpiresUtc": datetime.fromtimestamp(float(row["upload_expires_at"]), timezone.utc).isoformat().replace("+00:00", "Z"),

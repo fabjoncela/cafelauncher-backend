@@ -11,6 +11,7 @@ const profilePointer = document.querySelector("#profile-pointer");
 const profileCfg = document.querySelector("#profile-cfg");
 const profileDisplay = document.querySelector("#profile-display");
 const profileCs2Display = document.querySelector("#profile-cs2-display");
+const profileRevisionDisplay = document.querySelector("#profile-revision");
 const profileCfgFiles = new Map();
 const pointerSpeedLevels = [1, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20];
 const actionButtons = [applyProfileButton, applyGraphicsButton, playButton, checkPcButton];
@@ -33,6 +34,7 @@ let latestActionState = null;
 let displayedProgressEventId = "";
 let displayedProgressStartedAt = 0;
 let profileSummaryRequest = 0;
+let selectedProfileRevision = null;
 
 const siteUpdatedTime = document.querySelector("#site-updated");
 if (siteUpdatedTime?.dateTime) {
@@ -86,6 +88,7 @@ async function refreshSelectedProfileSummary() {
   profileCfg.textContent = profileCfgFiles.get(profileName) || "Unavailable";
   profileDisplay.textContent = "Loading…";
   profileCs2Display.textContent = "Loading…";
+  profileRevisionDisplay.textContent = "Loading…";
   try {
     const bundle = await readJson(await fetch(`/v1/profiles/${encodeURIComponent(profileName)}/bundle`, {
       cache: "no-store",
@@ -93,6 +96,8 @@ async function refreshSelectedProfileSummary() {
     }));
     if (requestNumber !== profileSummaryRequest || profileSelect.value !== profileName) return;
     const profile = bundle.profile;
+    selectedProfileRevision = Number.isInteger(bundle.revision) && bundle.revision > 0 ? bundle.revision : null;
+    profileRevisionDisplay.textContent = selectedProfileRevision === null ? "Unavailable" : String(selectedProfileRevision);
     profileDpi.textContent = Number.isInteger(profile.LogitechDPI) ? String(profile.LogitechDPI) : "Unavailable";
     profilePointer.textContent = formatPointerSpeedLevel(profile.PointerSpeed);
     const { Width: width, Height: height, RefreshHz: refreshHz } = profile;
@@ -106,6 +111,8 @@ async function refreshSelectedProfileSummary() {
     profilePointer.textContent = "Unavailable";
     profileDisplay.textContent = "Unavailable";
     profileCs2Display.textContent = "Unavailable";
+    selectedProfileRevision = null;
+    profileRevisionDisplay.textContent = "Unavailable";
   }
 }
 
@@ -257,6 +264,7 @@ async function readJson(response) {
   if (!response.ok) {
     const error = new Error(body?.message || `CafeLauncher returned HTTP ${response.status}.`);
     error.status = response.status;
+    error.code = body?.error;
     throw error;
   }
   return body;
@@ -306,6 +314,23 @@ function newRequestId() {
   let binary = "";
   for (const value of bytes) binary += String.fromCharCode(value);
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function requestRunnerWarmupOnPageOpen() {
+  const storageKey = "cafelauncher-runner-warmup-at";
+  const now = Date.now();
+  try {
+    const previous = Number(localStorage.getItem(storageKey));
+    if (Number.isFinite(previous) && now - previous >= 0 && now - previous < 4 * 60 * 60 * 1000) return;
+    localStorage.setItem(storageKey, String(now));
+  } catch {
+    try {
+      if (sessionStorage.getItem(storageKey)) return;
+      sessionStorage.setItem(storageKey, "1");
+    } catch { /* A tab can still try the protocol once when browser storage is disabled. */ }
+  }
+  setServiceStatus("Asking CafeLauncher to prepare in the background. If your browser asks, allow it; actions remain available.", "notice");
+  window.location.href = "cafelauncher://v1/warmup";
 }
 
 function setActionsDisabled(disabled) {
@@ -530,7 +555,7 @@ async function watchRequest(requestId) {
       }
       setServiceStatus(`Connection lost while checking the action result. Retrying automatically: ${error.message}`, "notice");
       await new Promise((resolve) => setTimeout(resolve, delay));
-      delay = Math.min(3000, delay + 400);
+      delay = Math.min(1000, delay + 150);
       continue;
     }
     updateReadinessFromRunner(state);
@@ -553,7 +578,7 @@ async function watchRequest(requestId) {
     const current = (events.length ? events[events.length - 1].state : "") || state.state;
     setServiceStatus(current === "AWAITING_LOCAL_INPUT" ? "Waiting for a Windows or device prompt on this PC…" : "Action running on this PC…", "working");
     await new Promise((resolve) => setTimeout(resolve, delay));
-    delay = Math.min(3000, delay + 400);
+    delay = Math.min(1000, delay + 150);
   }
 }
 
@@ -630,6 +655,7 @@ async function startAction(action, profile = null) {
     const requestId = newRequestId();
     setPendingRequest(requestId);
     let retryDelay = 700;
+    let revisionRefreshAttempted = false;
     while (!ticket) {
       try {
         ticket = await readJson(await fetch("/v1/actions", {
@@ -637,9 +663,17 @@ async function startAction(action, profile = null) {
           credentials: "same-origin",
           cache: "no-store",
           headers: { "Content-Type": "application/json", "X-Cafe-CSRF": csrfToken },
-          body: JSON.stringify({ action, profile, clientRequestId: requestId }),
+          body: JSON.stringify({ action, profile, clientRequestId: requestId,
+            profileRevision: action === "detect-pc" ? null : selectedProfileRevision }),
         }));
       } catch (error) {
+        if (error.code === "profile_revision_changed" && !revisionRefreshAttempted) {
+          revisionRefreshAttempted = true;
+          setServiceStatus("The selected profile changed. Refreshing it before starting the action…", "notice");
+          await refreshSelectedProfileSummary();
+          if (!Number.isInteger(selectedProfileRevision) || selectedProfileRevision < 1) throw new Error("The latest profile could not be loaded. Try again when the connection is available.");
+          continue;
+        }
         if (error.status && error.status < 500) {
           clearPendingRequest();
           requestResolved = true;
@@ -652,7 +686,8 @@ async function startAction(action, profile = null) {
     }
     requestResolved = true;
     setPendingRequest(ticket.requestId);
-    setServiceStatus("Opening CafeLauncher on this PC…", "working");
+    const revisionMessage = Number.isInteger(ticket.profileRevision) ? ` using backend version ${ticket.profileRevision}` : "";
+    setServiceStatus(`Opening CafeLauncher on this PC${revisionMessage}…`, "working");
     window.location.href = `cafelauncher://v1/run/${encodeURIComponent(ticket.requestId)}`;
     finished = await watchRequest(ticket.requestId);
   } catch (error) {
@@ -677,4 +712,6 @@ document.querySelector("#clear-recent-button").addEventListener("click", () => {
 });
 renderRecentActions();
 window.setInterval(() => updateLiveActionTimer(latestActionState), 1000);
-initialize();
+initialize().then(() => {
+  if (!getPendingRequest()) requestRunnerWarmupOnPageOpen();
+});

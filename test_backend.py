@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from contextlib import closing
 from pathlib import Path
@@ -331,6 +332,26 @@ class ApiTests(unittest.TestCase):
         self.environment.stop()
         self.temp.cleanup()
 
+    def test_action_request_migration_keeps_legacy_tickets_unpinned(self) -> None:
+        with server._connect() as connection:
+            connection.execute("ALTER TABLE action_requests DROP COLUMN profile_revision")
+            request_id = "A" * 43
+            connection.execute(
+                "INSERT INTO action_requests "
+                "(request_hash, session_hash, action, profile_name, state, created_utc, expires_at, events_json) "
+                "VALUES (?, ?, 'apply-profile', 'FabMode', 'REQUESTED', ?, ?, '[]')",
+                (server.ApiHandler._action_hash(request_id), "legacy-session", server._utc_now(), time.time() + 90),
+            )
+        server._initialize()
+        with server._connect() as connection:
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(action_requests)")}
+            row = connection.execute(
+                "SELECT profile_revision FROM action_requests WHERE request_hash = ?",
+                (server.ApiHandler._action_hash(request_id),),
+            ).fetchone()
+        self.assertIn("profile_revision", columns)
+        self.assertIsNone(row["profile_revision"])
+
     def request(self, path: str, *, method: str = "GET", body: bytes | None = None, token: str | None = None, content_type: str = "application/json", headers: dict[str, str] | None = None):
         headers = dict(headers or {})
         if token:
@@ -368,7 +389,23 @@ class ApiTests(unittest.TestCase):
     def create_action(self, action: str, profile: str | None = None) -> tuple[str, str, str]:
         session_cookie, csrf = self.create_action_session()
         request_id = base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("=")
-        body = json.dumps({"action": action, "profile": profile, "clientRequestId": request_id}).encode()
+        payload = {"action": action, "profile": profile, "clientRequestId": request_id}
+        if profile is not None:
+            with server._connect() as connection:
+                row = connection.execute(
+                    "SELECT revision FROM profile_revisions WHERE profile_name = ? ORDER BY revision DESC LIMIT 1",
+                    (profile,),
+                ).fetchone()
+                if row is None:
+                    connection.execute(
+                        "INSERT INTO profile_revisions (profile_name, revision, created_utc, profile_json, graphics_json, cfg_text) "
+                        "VALUES (?, 1, ?, ?, ?, ?)",
+                        (profile, server._utc_now(), json.dumps(profile_payload(profile)),
+                         json.dumps(graphics_payload(profile)), "// test cfg\n"),
+                    )
+                    row = {"revision": 1}
+                payload["profileRevision"] = int(row["revision"])
+        body = json.dumps(payload).encode()
         status, _, response_body = self.request(
             "/v1/actions",
             method="POST",
@@ -378,6 +415,46 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(status, 201)
         self.assertEqual(json.loads(response_body)["requestId"], request_id)
         return request_id, session_cookie, csrf
+
+    def test_profile_action_pins_revision_and_rejects_stale_page(self) -> None:
+        request_id, session_cookie, csrf = self.create_action("apply-graphics", "FabMode")
+        headers = self.action_browser_headers(session_cookie, csrf)
+        status, _, state = self.request(f"/v1/actions/{request_id}", headers=self.action_browser_headers(session_cookie))
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(state)["profileRevision"], 1)
+
+        with server._connect() as connection:
+            connection.execute(
+                "INSERT INTO profile_revisions (profile_name, revision, created_utc, profile_json, graphics_json, cfg_text) "
+                "VALUES (?, 2, ?, ?, ?, ?)",
+                ("FabMode", server._utc_now(), json.dumps(profile_payload()),
+                 json.dumps(graphics_payload()), "// changed cfg\n"),
+            )
+        retry = json.dumps({
+            "action": "apply-graphics", "profile": "FabMode", "clientRequestId": request_id,
+            "profileRevision": 1,
+        }).encode()
+        status, _, duplicate = self.request("/v1/actions", method="POST", body=retry, headers=headers)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(duplicate)["profileRevision"], 1)
+
+        stale_id = base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("=")
+        stale = json.dumps({
+            "action": "apply-graphics", "profile": "FabMode", "clientRequestId": stale_id,
+            "profileRevision": 1,
+        }).encode()
+        status, _, rejected = self.request("/v1/actions", method="POST", body=stale, headers=headers)
+        self.assertEqual(status, 409)
+        self.assertEqual(json.loads(rejected)["error"], "profile_revision_changed")
+
+        capability = base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("=")
+        claim = json.dumps({
+            "runnerVersion": server.MIN_WEB_ACTION_RUNNER_VERSION,
+            "protocolVersion": 1, "claimCapability": capability,
+        }).encode()
+        status, _, claimed = self.request(f"/v1/actions/{request_id}/claim", method="POST", body=claim)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(claimed)["profileRevision"], 1)
 
     def test_web_profile_actions_require_known_profile_and_bounded_results(self) -> None:
         valid = {
@@ -525,7 +602,12 @@ class ApiTests(unittest.TestCase):
         self.assertIn(b"2. Apply game graphics", home)
         self.assertIn(b"3. Play + Exec", home)
         self.assertIn(b'id="profile-cs2-display"', home)
+        self.assertIn(b'id="profile-revision"', home)
         self.assertIn(b"formatCs2Resolution", app_js)
+        self.assertIn(b"profileRevision: action === \"detect-pc\" ? null : selectedProfileRevision", app_js)
+        self.assertIn(b"Math.min(1000, delay + 150)", app_js)
+        self.assertIn(b"cafelauncher://v1/warmup", app_js)
+        self.assertIn(b"profile_revision_changed", app_js)
         self.assertIn(b'graphics?.RefreshPolicy === "Highest"', app_js)
         self.assertIn(b'graphics?.RefreshPolicy === "Exact"', app_js)
         self.assertNotIn(b"Detect this PC", home)
@@ -785,6 +867,13 @@ class ApiTests(unittest.TestCase):
 
         session_cookie, csrf = self.create_action_session()
         request_id = base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("=")
+        with server._connect() as connection:
+            connection.execute(
+                "INSERT INTO profile_revisions (profile_name, revision, created_utc, profile_json, graphics_json, cfg_text) "
+                "VALUES (?, 1, ?, ?, ?, ?)",
+                ("FabMode", server._utc_now(), json.dumps(profile_payload()),
+                 json.dumps(graphics_payload()), "// test cfg\n"),
+            )
         create_body = json.dumps({"action": "play-exec", "profile": "FabMode", "clientRequestId": request_id}).encode()
         status, _, _ = self.request(
             "/v1/actions", method="POST", body=create_body,
