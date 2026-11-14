@@ -46,17 +46,20 @@
     <section class="action-grid" aria-label="Profile actions">
       <section class="panel action-panel" aria-labelledby="apply-heading">
         <h2 id="apply-heading">1. Apply profile</h2>
-        <button id="apply-profile-button" type="button" disabled>Apply profile</button>
+        <p id="apply-description" class="visually-hidden">Runs immediately when clicked. Apply the selected profile's Windows, NVIDIA, CFG, mouse, and supported Logitech live DPI settings. If LaunchApps is enabled, also start Steam and FACEIT and open the configured profile apps.</p>
+        <button id="apply-profile-button" type="button" aria-describedby="apply-description" disabled>Apply profile</button>
       </section>
 
       <section class="panel action-panel" aria-labelledby="graphics-heading">
         <h2 id="graphics-heading">2. Apply game graphics</h2>
-        <button id="apply-graphics-button" type="button" disabled>Apply game graphics</button>
+        <p id="graphics-description" class="visually-hidden">Apply the selected profile's CS2 video settings and supported NVIDIA scaling, like CafeLauncher on Windows.</p>
+        <button id="apply-graphics-button" type="button" aria-describedby="graphics-description" disabled>Apply game graphics</button>
       </section>
 
       <section class="panel action-panel" aria-labelledby="play-heading">
         <h2 id="play-heading">3. Play + Exec</h2>
-        <button id="play-button" type="button" disabled>Play + Exec</button>
+        <p id="play-description" class="visually-hidden">Install the selected profile's verified CFG and start CS2 through Steam.</p>
+        <button id="play-button" type="button" aria-describedby="play-description" disabled>Play + Exec</button>
       </section>
     </section>
 
