@@ -132,10 +132,14 @@ def build_snapshot() -> tuple[int, dict[str, bytes]]:
             if item["profile_name"] == name
         ]
         history_bytes = _json_bytes({"profile": name, "revisions": history})
+        if not history:
+            raise MirrorError(f"Profile {name} has no graphics history to mirror.")
+        graphics_revision = int(history[0]["revision"])
         for path, data in ((profile_path, profile_bytes), (graphics_path, graphics_bytes), (cfg_path, cfg_bytes), (history_path, history_bytes)):
             files[path] = data
         profile_manifest[name] = {
             "revision": row["revision"],
+            "graphicsRevision": graphics_revision,
             "createdUtc": row["created_utc"],
             "files": {"profile": profile_path, "graphics": graphics_path, "cfg": cfg_path, "graphicsHistory": history_path},
             "sha256": {
