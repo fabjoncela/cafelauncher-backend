@@ -52,3 +52,13 @@ h1 { margin-bottom: 5px; font-size: clamp(28px, 4vw, 38px); letter-spacing: -.03
   .site-header { flex-direction: column; padding-top: 28px; }
   .status-grid { grid-template-columns: 1fr; }
 }
+
+
+.repository-activity { margin-top: 28px; }
+.repository-activity-heading { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+.repository-activity-heading h2 { margin: 0; font-size: 20px; letter-spacing: -.02em; }
+.repository-activity .status-card { display: flex; flex-direction: column; align-items: flex-start; }
+.repository-activity .card-value { font-size: clamp(16px, 2.2vw, 20px); }
+.repository-activity .card-detail { min-height: 38px; }
+.repository-link { margin-top: 8px; font-size: 13px; text-decoration: none; }
+.repository-link:hover { text-decoration: underline; }
