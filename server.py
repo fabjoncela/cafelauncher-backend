@@ -1139,6 +1139,7 @@ class ApiHandler(BaseHTTPRequestHandler):
             "app": ("app.html", "text/html; charset=utf-8"),
             "app.css": ("app.css", "text/css; charset=utf-8"),
             "app.js": ("app.js", "text/javascript; charset=utf-8"),
+            "favicon.png": ("favicon.png", "image/png"),
             "viewer": ("viewer.html", "text/html; charset=utf-8"),
             "viewer.css": ("viewer.css", "text/css; charset=utf-8"),
             "viewer.js": ("viewer.js", "text/javascript; charset=utf-8"),
@@ -1158,7 +1159,7 @@ class ApiHandler(BaseHTTPRequestHandler):
         headers = {"Referrer-Policy": "no-referrer"}
         if filename in {"app.html", "viewer.html"}:
             headers["Content-Security-Policy"] = (
-                "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; "
+                "default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; connect-src 'self'; "
                 "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
             )
             headers["X-Frame-Options"] = "DENY"
@@ -1204,7 +1205,7 @@ class ApiHandler(BaseHTTPRequestHandler):
             self._send_viewer_asset("app")
             return
 
-        if len(parts) == 1 and parts[0] in ("app.css", "app.js", "viewer", "viewer.css", "viewer.js", "status.css", "status.js"):
+        if len(parts) == 1 and parts[0] in ("app.css", "app.js", "favicon.png", "viewer", "viewer.css", "viewer.js", "status.css", "status.js"):
             self._send_viewer_asset(parts[0])
             return
 

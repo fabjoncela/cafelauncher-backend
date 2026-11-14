@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>CafeLauncher</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
   <link rel="stylesheet" href="/app.css">
   <script src="/app.js" defer></script>
 </head>
@@ -30,16 +31,6 @@
       <p id="service-status" class="status-line" role="status" aria-live="polite">Connecting to CafeLauncher…</p>
     </section>
 
-    <section class="panel install-panel" aria-labelledby="install-heading">
-      <div>
-        <p class="eyebrow">ONE-TIME WINDOWS SETUP</p>
-        <h2 id="install-heading">Set up this PC</h2>
-        <p>Download CafeLauncher, then open the downloaded file once. It installs for this Windows account and connects the website buttons. No admin rights are needed.</p>
-        <p class="install-reset-note">If this PC resets files after reboot (for example, Deep Freeze), café staff should install it in the saved PC image. Players then will not need to repeat setup.</p>
-      </div>
-      <a class="install-button" href="https://github.com/fabjoncela/Cs-script/releases/latest/download/CafeLauncherWebRunner.exe">Download CafeLauncher</a>
-    </section>
-
     <section class="panel profile-panel">
       <label for="profile-select">Profile</label>
       <select id="profile-select" disabled><option value="">Loading profiles…</option></select>
@@ -52,31 +43,31 @@
       </div>
     </section>
 
-    <section class="panel action-panel" aria-labelledby="apply-heading">
-      <div>
-        <p class="eyebrow">PROFILE ACTION</p>
+    <section class="action-grid" aria-label="Profile actions">
+      <section class="panel action-panel" aria-labelledby="apply-heading">
         <h2 id="apply-heading">1. Apply profile</h2>
-        <p>Runs immediately when clicked. Apply the selected profile's Windows, NVIDIA, CFG, mouse, and supported Logitech live DPI settings. If LaunchApps is enabled, also start Steam and FACEIT and open the configured profile apps.</p>
-      </div>
-      <button id="apply-profile-button" type="button" disabled>Apply profile</button>
-    </section>
+        <button id="apply-profile-button" type="button" disabled>Apply profile</button>
+      </section>
 
-    <section class="panel action-panel" aria-labelledby="graphics-heading">
-      <div>
-        <p class="eyebrow">PROFILE ACTION</p>
+      <section class="panel action-panel" aria-labelledby="graphics-heading">
         <h2 id="graphics-heading">2. Apply game graphics</h2>
-        <p>Apply the selected profile's CS2 video settings and supported NVIDIA scaling, like CafeLauncher on Windows.</p>
-      </div>
-      <button id="apply-graphics-button" type="button" disabled>Apply game graphics</button>
+        <button id="apply-graphics-button" type="button" disabled>Apply game graphics</button>
+      </section>
+
+      <section class="panel action-panel" aria-labelledby="play-heading">
+        <h2 id="play-heading">3. Play + Exec</h2>
+        <button id="play-button" type="button" disabled>Play + Exec</button>
+      </section>
     </section>
 
-    <section class="panel action-panel" aria-labelledby="play-heading">
+    <section class="panel install-panel" aria-labelledby="install-heading">
       <div>
-        <p class="eyebrow">PROFILE ACTION</p>
-        <h2 id="play-heading">3. Play + Exec</h2>
-        <p>Install the selected profile's verified CFG and start CS2 through Steam.</p>
+        <p class="eyebrow">ONE-TIME WINDOWS SETUP</p>
+        <h2 id="install-heading">Set up this PC</h2>
+        <p>Download CafeLauncher, then open the downloaded file once. It installs for this Windows account and connects the website buttons. No admin rights are needed.</p>
+        <p class="install-reset-note">If this PC resets files after reboot (for example, Deep Freeze), café staff should install it in the saved PC image. Players then will not need to repeat setup.</p>
       </div>
-      <button id="play-button" type="button" disabled>Play + Exec</button>
+      <a class="install-button" href="https://github.com/fabjoncela/Cs-script/releases/latest/download/CafeLauncherWebRunner.exe">Download CafeLauncher</a>
     </section>
 
     <section id="result-panel" class="panel result-panel" aria-labelledby="result-heading" hidden>
