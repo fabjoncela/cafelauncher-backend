@@ -1078,6 +1078,11 @@ class ApiTests(unittest.TestCase):
         history = json.loads(body)["revisions"]
         self.assertEqual([entry["revision"] for entry in history], [4, 1])
 
+        profile_after_graphics = dict(profile_only)
+        profile_after_graphics["PointerSpeed"] = 12
+        status, _, _ = self.put_bundle(4, token=sync_token, profile=profile_after_graphics, graphics=graphics_changed, cfg='sensitivity "1.3"\n')
+        self.assertEqual(status, 200)
+
         with patch.dict(
             os.environ,
             {
@@ -1089,6 +1094,9 @@ class ApiTests(unittest.TestCase):
             _, files = github_mirror.build_snapshot()
         mirrored_history = json.loads(files["history/graphics/FabMode.json"])["revisions"]
         self.assertEqual([entry["revision"] for entry in mirrored_history], [4, 1])
+        profile_manifest = json.loads(files["mirror-manifest.json"])["profiles"]["FabMode"]
+        self.assertEqual(profile_manifest["revision"], 5)
+        self.assertEqual(profile_manifest["graphicsRevision"], 4)
 
     def test_profile_history_lists_every_bundle_revision_and_returns_complete_snapshot(self) -> None:
         sync_token = os.environ["CAFELAUNCHER_SYNC_TOKEN"]
