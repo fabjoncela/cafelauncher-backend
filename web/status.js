@@ -41,6 +41,19 @@ copyButton.addEventListener("click", copyDiagnostics);
 const repositoryActivityGrid = document.querySelector("#repository-activity-grid");
 const repositoryActivityChecked = document.querySelector("#repository-activity-checked");
 
+function repositoryRelativeAge(date) {
+  const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+  if (seconds < 60) return "just now";
+  const units = [[86400, "day"], [3600, "hour"], [60, "minute"]];
+  for (const [size, label] of units) {
+    if (seconds >= size) {
+      const amount = Math.floor(seconds / size);
+      return `${amount} ${label}${amount === 1 ? "" : "s"} ago`;
+    }
+  }
+  return "just now";
+}
+
 function renderRepositoryActivity(payload) {
   const repositories = Array.isArray(payload?.repositories) ? payload.repositories : [];
   repositoryActivityGrid.replaceChildren();
@@ -68,14 +81,10 @@ function renderRepositoryActivity(payload) {
       } else {
         const time = document.createElement("time");
         time.dateTime = pushedAt.toISOString();
-        time.textContent = pushedAt.toLocaleString();
+        time.textContent = repositoryRelativeAge(pushedAt);
+        time.title = pushedAt.toLocaleString();
         value.append(time);
-        const relative = document.createElement("span");
-        relative.className = "relative-age";
-        relative.textContent = pushedAt.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-        detail.textContent = `${repository.role || ""} · Last push`;
-        detail.append(document.createTextNode(" · "));
-        detail.append(relative);
+        detail.textContent = `${repository.role || ""} · ${pushedAt.toLocaleString()}`;
       }
     } else {
       value.textContent = "Unavailable";
