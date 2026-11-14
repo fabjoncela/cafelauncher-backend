@@ -16,6 +16,8 @@ import tempfile
 import threading
 import time
 import uuid
+import urllib.error
+import urllib.request
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from http.cookies import CookieError, SimpleCookie
@@ -59,6 +61,49 @@ ACTION_TERMINAL_STATES = frozenset({"COMPLETED", "PARTIAL", "SKIPPED", "FAILED",
 ACTION_PROGRESS_STATES = frozenset({"RUNNING", "AWAITING_LOCAL_INPUT"})
 ACTION_STEP_STATES = frozenset({"SUCCESS", "PARTIAL", "SKIPPED", "FAILED", "PENDING", "RUNNING"})
 DB_LOCK = threading.RLock()
+
+REPOSITORY_STATUS_CACHE_TTL_SECONDS = 300
+REPOSITORY_STATUS_CACHE_LOCK = threading.Lock()
+REPOSITORY_STATUS_CACHE: dict[str, object] = {"expires_at": 0.0, "value": None}
+REPOSITORY_STATUS_TARGETS = (
+    {"name": "Cs-script", "repository": "fabjoncela/Cs-script", "role": "Launcher source"},
+    {"name": "CafeLauncher Backend", "repository": "fabjoncela/cafelauncher-backend", "role": "Backend API"},
+    {"name": "Backend Mirror", "repository": "fabjoncela/cafelauncher-backend-mirror", "role": "Public fallback snapshot"},
+)
+
+
+def _github_repository_status() -> dict[str, object]:
+    """Return cached public GitHub push timestamps; isolate failures per repository."""
+    now = time.monotonic()
+    cached = REPOSITORY_STATUS_CACHE.get("value")
+    if cached is not None and now < float(REPOSITORY_STATUS_CACHE.get("expires_at", 0)):
+        return cached  # type: ignore[return-value]
+    with REPOSITORY_STATUS_CACHE_LOCK:
+        now = time.monotonic()
+        cached = REPOSITORY_STATUS_CACHE.get("value")
+        if cached is not None and now < float(REPOSITORY_STATUS_CACHE.get("expires_at", 0)):
+            return cached  # type: ignore[return-value]
+        repositories = []
+        for target in REPOSITORY_STATUS_TARGETS:
+            item = {**target, "status": "unavailable", "pushedAt": None, "url": f"https://github.com/{target['repository']}", "error": None}
+            request = urllib.request.Request(
+                f"https://api.github.com/repos/{target['repository']}",
+                headers={"Accept": "application/vnd.github+json", "User-Agent": "CafeLauncher-Status"},
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=4) as response:
+                    payload = json.loads(response.read(256 * 1024).decode("utf-8"))
+                pushed_at = payload.get("pushed_at")
+                if isinstance(pushed_at, str) and pushed_at:
+                    item.update(status="available", pushedAt=pushed_at)
+                else:
+                    item["error"] = "GitHub did not return a push timestamp."
+            except (urllib.error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError):
+                item["error"] = "GitHub metadata is temporarily unavailable."
+            repositories.append(item)
+        value = {"repositories": repositories, "checkedAt": _utc_now(), "cacheTtlSeconds": REPOSITORY_STATUS_CACHE_TTL_SECONDS}
+        REPOSITORY_STATUS_CACHE.update(value=value, expires_at=time.monotonic() + REPOSITORY_STATUS_CACHE_TTL_SECONDS)
+        return value
 
 
 def _utc_now() -> str:
@@ -1289,6 +1334,17 @@ class ApiHandler(BaseHTTPRequestHandler):
     <article class="status-card"><p class="card-label">Latest profile save</p><p class="card-value release-value">{latest_profile_save_markup}</p><p class="card-detail">{latest_profile_save_profile or "No saved profile bundles"}</p></article>
     <article class="status-card"><p class="card-label">Backend-hosted release</p><p class="card-value release-value">{release_value}</p><p class="card-detail">The launcher currently auto-updates from Cs-script on GitHub.</p></article>
   </section>
+  <section class="repository-activity" aria-labelledby="repository-activity-heading">
+    <div class="repository-activity-heading">
+      <div><p class="eyebrow">GITHUB · MAIN BRANCHES</p><h2 id="repository-activity-heading">Last repository pushes</h2></div>
+      <span id="repository-activity-checked" class="relative-age" role="status" aria-live="polite">Checking GitHub…</span>
+    </div>
+    <div id="repository-activity-grid" class="status-grid" aria-live="polite">
+      <article class="status-card"><p class="card-label">Cs-script</p><p class="card-value">Checking…</p><p class="card-detail">Launcher source</p></article>
+      <article class="status-card"><p class="card-label">CafeLauncher Backend</p><p class="card-value">Checking…</p><p class="card-detail">Backend API</p></article>
+      <article class="status-card"><p class="card-label">Backend Mirror</p><p class="card-value">Checking…</p><p class="card-detail">Public fallback snapshot</p></article>
+    </div>
+  </section>
   <nav class="quick-links" aria-label="Backend links">
     <a class="primary-link" href="/">CafeLauncher home</a>
     <a href="/viewer">Open profile viewer</a>
@@ -1312,6 +1368,10 @@ class ApiHandler(BaseHTTPRequestHandler):
                     "Referrer-Policy": "no-referrer",
                 },
             )
+            return
+
+        if parts == ["v1", "repository-status"]:
+            self._send_json(200, _github_repository_status(), cache_control="no-store")
             return
 
         if parts == ["v1", "health"]:
