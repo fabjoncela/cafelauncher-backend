@@ -106,15 +106,25 @@ function renderRepositoryActivity(payload) {
 }
 
 async function refreshRepositoryActivity() {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), 10000);
   try {
-    const response = await fetch("/v1/repository-status", { cache: "no-store" });
+    const response = await fetch("/v1/repository-status", {
+      cache: "no-store",
+      signal: controller.signal,
+    });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     renderRepositoryActivity(await response.json());
   } catch {
-    repositoryActivityChecked.textContent = "GitHub status unavailable";
-    if (!repositoryActivityGrid.children.length) {
-      repositoryActivityGrid.textContent = "Could not load repository activity.";
-    }
+    repositoryActivityChecked.textContent = "Repository status unavailable";
+    const values = repositoryActivityGrid.querySelectorAll(".card-value");
+    const details = repositoryActivityGrid.querySelectorAll(".card-detail");
+    values.forEach((value) => { value.textContent = "Unavailable"; });
+    details.forEach((detail) => {
+      detail.textContent = "Could not load repository activity. Retrying automatically.";
+    });
+  } finally {
+    window.clearTimeout(timeoutId);
   }
 }
 
