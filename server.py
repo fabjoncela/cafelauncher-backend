@@ -1364,7 +1364,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                 body,
                 "text/html; charset=utf-8",
                 headers={
-                    "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+                    "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
                     "Referrer-Policy": "no-referrer",
                 },
             )
